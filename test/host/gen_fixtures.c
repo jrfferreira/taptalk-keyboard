@@ -12,6 +12,11 @@
 #define SECONDS 1
 #define SAMPLES (RATE * SECONDS)
 
+/* Not M_PI: that is a POSIX extension, and glibc hides it under -std=c11
+ * because the flag defines __STRICT_ANSI__. Apple's libm exposes it regardless,
+ * which is exactly why this compiled here and failed on the CI runner. */
+#define TWO_PI 6.283185307179586476925286766559
+
 int main(int argc, char **argv)
 {
     if (argc != 3) {
@@ -24,7 +29,7 @@ int main(int argc, char **argv)
     static uint8_t buf[WAV_HEADER_SIZE + SAMPLES * 2];
     int16_t *pcm = (int16_t *)(buf + WAV_HEADER_SIZE);
     for (int i = 0; i < SAMPLES; i++) {
-        pcm[i] = (int16_t)(12000.0 * sin(2.0 * M_PI * 440.0 * i / RATE));
+        pcm[i] = (int16_t)(12000.0 * sin(TWO_PI * 440.0 * i / RATE));
     }
     if (wav_write_header(buf, sizeof(buf), SAMPLES * 2, RATE, 16, 1) != WAV_HEADER_SIZE) {
         return 1;
