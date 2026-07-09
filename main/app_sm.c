@@ -1,12 +1,15 @@
 #include "app_sm.h"
 
 #include "audio_capture.h"
+#include "config_store.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "net_wifi.h"
 #include "pmic.h"
+#include "provisioning.h"
 #include "ui.h"
 
 static const char *TAG = "sm";
@@ -16,6 +19,12 @@ static const char *TAG = "sm";
 
 static QueueHandle_t s_queue;
 static app_state_t s_state = ST_BOOT; /* written only by the sm task */
+static app_config_t s_cfg;
+
+/* Latched from the events themselves, so a guard reflects exactly what the
+ * state machine has been told rather than whatever a driver happens to report
+ * at the moment it is asked. Written only by the sm task. */
+static bool s_wifi_up, s_time_ok;
 
 app_state_t app_sm_state(void) { return s_state; }
 
@@ -24,24 +33,20 @@ void app_sm_post(app_event_t event)
     if (s_queue == NULL) {
         return;
     }
-    /* Never block: the caller may be the LVGL render task or a Wi-Fi event
-     * handler, neither of which may stall. A dropped event is recoverable;
-     * a stalled render task is not. */
+    /* Never block: the caller may be the LVGL render task, a Wi-Fi event
+     * handler, or an HTTP worker, none of which may stall. A dropped event is
+     * recoverable; a stalled render task is not. */
     if (xQueueSend(s_queue, &event, 0) != pdTRUE) {
         ESP_LOGW(TAG, "event queue full, dropped event %d", (int)event);
     }
 }
 
-/* Latched from the events themselves, so a guard reflects exactly what the
- * state machine has been told rather than whatever a driver happens to
- * report at the moment it is asked. Written only by the sm task. */
-static bool s_wifi_up, s_time_ok;
-
 static sm_guards_t current_guards(void)
 {
     sm_guards_t g = {
-        .wifi_up = s_wifi_up,
-        .time_ok = s_time_ok,
+        .provisioned = config_is_provisioned(&s_cfg),
+        .wifi_up     = s_wifi_up,
+        .time_ok     = s_time_ok,
         /* Chunk 1 ships no USB HID (installing TinyUSB would take over the
          * USB PHY and kill the serial console we need for bring-up), so the
          * mount precondition is vacuously satisfied. hid_kbd.c replaces this
@@ -69,9 +74,17 @@ static void run_actions(uint32_t actions)
             app_sm_post(EV_PMIC_FAIL);
         }
     }
+    if (actions & ACT_PROV_START) {
+        prov_info_t info;
+        if (provisioning_start(&info) == ESP_OK) {
+            ui_show_setup(&info);
+        } else {
+            ui_set_msg("Setup AP failed");
+        }
+    }
     if (actions & (ACT_WIFI_START | ACT_WIFI_RETRY)) {
-        if (net_wifi_connect() != ESP_OK) {
-            app_sm_post(EV_TIMEOUT);
+        if (net_wifi_sta_connect(&s_cfg) != ESP_OK) {
+            app_sm_post(EV_WIFI_DOWN);
         }
     }
     if (actions & ACT_SNTP_START) {
@@ -85,9 +98,9 @@ static void run_actions(uint32_t actions)
         audio_record_end();
     }
     if (actions & ACT_UPLOAD_START) {
-        /* Chunk 2 replaces this with the multipart HTTPS client. Reporting
-         * the clip and returning to idle keeps the flow honest in the
-         * meantime rather than faking a transcript. */
+        /* Chunk 2 replaces this with the multipart HTTPS client. Reporting the
+         * clip and returning to idle keeps the flow honest in the meantime
+         * rather than faking a transcript. */
         ESP_LOGI(TAG, "clip ready: %u ms, peak %d (upload lands in chunk 2)",
                  (unsigned)audio_clip_ms(), audio_clip_peak());
         char msg[64];
@@ -103,7 +116,13 @@ static void run_actions(uint32_t actions)
         ui_set_msg(!s_wifi_up ? "Wi-Fi not connected" : "Clock not synced");
     }
     if (actions & ACT_SHOW_ERROR) {
-        ui_set_msg("Error - tap to retry");
+        ui_set_msg(config_is_provisioned(&s_cfg) ? "Error - tap Setup or wait"
+                                                 : "Not configured - tap Setup");
+    }
+    if (actions & ACT_REBOOT) {
+        ESP_LOGI(TAG, "restarting to apply configuration");
+        vTaskDelay(pdMS_TO_TICKS(300));
+        esp_restart();
     }
     /* ACT_UPLOAD_ABORT / ACT_TYPE_START / ACT_TYPE_ABORT are unreachable in
      * chunk 1: there is no network client and no HID. Deliberately not
@@ -121,7 +140,8 @@ static void sm_task(void *arg)
         app_event_t ev;
         if (xQueueReceive(s_queue, &ev, pdMS_TO_TICKS(ERROR_AUTO_CLEAR_MS)) != pdTRUE) {
             /* Idle tick. An error state clears itself so the device does not
-             * strand the user on a dead screen. */
+             * strand the user on a dead screen — unless it is unprovisioned,
+             * in which case sm_step() keeps it there on purpose. */
             if (s_state == ST_ERROR) {
                 ev = EV_TIMEOUT;
             } else {
@@ -153,8 +173,10 @@ static void sm_task(void *arg)
     }
 }
 
-void app_sm_start(void)
+void app_sm_start(const app_config_t *cfg)
 {
+    s_cfg = *cfg;
+
     s_queue = xQueueCreate(EVENT_QUEUE_DEPTH, sizeof(app_event_t));
     configASSERT(s_queue != NULL);
     /* Core 1, alongside LVGL and audio; core 0 belongs to the radio. */

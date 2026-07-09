@@ -2,6 +2,8 @@ idf_component_register(
     SRCS
         "app_main.c"
         "app_sm.c"
+        "config_store.c"
+        "provisioning.c"
         "pmic.c"
         "ui.c"
         "audio_capture.c"
@@ -11,9 +13,11 @@ idf_component_register(
         core
         esp_wifi
         esp_netif
+        esp_http_server
         esp_app_format
         nvs_flash
         esp-tls
         esp_timer
+        lwip
         driver
 )

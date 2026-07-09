@@ -22,12 +22,28 @@ sm_out_t sm_step(app_state_t state, app_event_t event, const sm_guards_t *g)
         return out(ST_PMIC_INIT, ACT_PMIC_INIT);
 
     case ST_PMIC_INIT:
-        if (event == EV_PMIC_OK)   return out(ST_WIFI_CONNECTING, ACT_WIFI_START);
+        if (event == EV_PMIC_OK) {
+            /* A device with no stored SSID has nothing to connect to. Go
+             * straight to the portal rather than failing five times first. */
+            return g->provisioned ? out(ST_WIFI_CONNECTING, ACT_WIFI_START)
+                                  : out(ST_PROVISIONING, ACT_PROV_START);
+        }
         if (event == EV_PMIC_FAIL) return out(ST_ERROR, ACT_SHOW_ERROR);
+        return ignore;
+
+    case ST_PROVISIONING:
+        /* Credentials land in NVS, then we reboot. Switching the radio from
+         * AP back to STA in place is more moving parts than a restart is
+         * worth, and a restart also re-runs the whole boot path we just
+         * changed the inputs to. */
+        if (event == EV_PROVISIONED) return out(ST_PROVISIONING, ACT_REBOOT);
         return ignore;
 
     case ST_WIFI_CONNECTING:
         if (event == EV_WIFI_UP) return out(ST_TIME_SYNC, ACT_SNTP_START);
+        /* The escape hatch for a wrong password: the user can reopen the
+         * portal without waiting for the retry ladder to run out. */
+        if (event == EV_ENTER_SETUP) return out(ST_PROVISIONING, ACT_PROV_START);
         /* A failed association surfaces as a disconnect, not a timeout, so
          * both must drive the retry ladder or we sit here forever. */
         if (event == EV_TIMEOUT || event == EV_WIFI_DOWN) {
@@ -43,6 +59,7 @@ sm_out_t sm_step(app_state_t state, app_event_t event, const sm_guards_t *g)
         if (event == EV_TIME_OK)   return out(ST_IDLE_READY, ACT_NONE);
         if (event == EV_TIME_FAIL) return out(ST_ERROR, ACT_SHOW_ERROR);
         if (event == EV_WIFI_DOWN) return out(ST_WIFI_CONNECTING, ACT_WIFI_RETRY);
+        if (event == EV_ENTER_SETUP) return out(ST_PROVISIONING, ACT_PROV_START);
         return ignore;
 
     case ST_IDLE_READY:
@@ -50,6 +67,7 @@ sm_out_t sm_step(app_state_t state, app_event_t event, const sm_guards_t *g)
             return ready_to_record(g) ? out(ST_RECORDING, ACT_REC_START)
                                       : out(ST_IDLE_READY, ACT_HINT_NOT_READY);
         }
+        if (event == EV_ENTER_SETUP) return out(ST_PROVISIONING, ACT_PROV_START);
         if (event == EV_WIFI_DOWN || event == EV_USB_UNMOUNT) {
             return out(ST_NOT_READY, ACT_NONE);
         }
@@ -60,6 +78,7 @@ sm_out_t sm_step(app_state_t state, app_event_t event, const sm_guards_t *g)
             /* Both preconditions must hold; the guards carry the other one. */
             return ready_to_record(g) ? out(ST_IDLE_READY, ACT_NONE) : ignore;
         }
+        if (event == EV_ENTER_SETUP) return out(ST_PROVISIONING, ACT_PROV_START);
         if (event == EV_BTN_PRESS) return out(ST_NOT_READY, ACT_HINT_NOT_READY);
         return ignore;
 
@@ -100,11 +119,18 @@ sm_out_t sm_step(app_state_t state, app_event_t event, const sm_guards_t *g)
         return ignore;
 
     case ST_ERROR:
+        /* Checked before EV_RETRY: a user who opens setup from the error
+         * screen wants the portal, not another doomed reconnect. */
+        if (event == EV_ENTER_SETUP) return out(ST_PROVISIONING, ACT_PROV_START);
         if (event == EV_RETRY) {
             return g->wifi_up ? out(ST_IDLE_READY, ACT_CLIP_DISCARD)
                               : out(ST_WIFI_CONNECTING, ACT_WIFI_RETRY);
         }
-        if (event == EV_TIMEOUT) return out(ST_IDLE_READY, ACT_CLIP_DISCARD);
+        /* An unprovisioned device has no idle state to fall back to; the
+         * error screen would otherwise clear itself into a dead ST_IDLE_READY. */
+        if (event == EV_TIMEOUT) {
+            return g->provisioned ? out(ST_IDLE_READY, ACT_CLIP_DISCARD) : ignore;
+        }
         return ignore;
 
     case ST_COUNT:
@@ -118,6 +144,7 @@ const char *sm_state_name(app_state_t state)
     switch (state) {
     case ST_BOOT:            return "BOOT";
     case ST_PMIC_INIT:       return "PMIC_INIT";
+    case ST_PROVISIONING:    return "SETUP";
     case ST_WIFI_CONNECTING: return "WIFI_CONNECTING";
     case ST_TIME_SYNC:       return "TIME_SYNC";
     case ST_IDLE_READY:      return "IDLE_READY";

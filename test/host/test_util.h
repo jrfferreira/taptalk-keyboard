@@ -39,10 +39,12 @@ static int tests_failed = 0;
         }                                                                                \
     } while (0)
 
-#define TEST_MAIN(name, body)                                                            \
+/* Variadic so a test body may contain brace-enclosed initializer lists, whose
+ * commas would otherwise be read as extra macro arguments. */
+#define TEST_MAIN(name, ...)                                                             \
     int main(void)                                                                       \
     {                                                                                    \
-        body;                                                                            \
+        __VA_ARGS__;                                                                     \
         if (tests_failed == 0) {                                                         \
             printf("PASS %-14s %3d checks\n", (name), tests_run);                        \
             return 0;                                                                    \

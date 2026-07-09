@@ -13,6 +13,8 @@ test/host/test_textnorm
 test/host/test_keymap
 test/host/test_multipart
 test/host/test_sm
+test/host/test_formdec
+test/host/test_dnsreply
 test/host/gen_fixtures
 *.dSYM/
 

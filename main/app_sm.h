@@ -3,9 +3,11 @@
  * other task posts events here and never reads the state directly. */
 #pragma once
 
+#include "config_store.h"
 #include "core/sm.h"
 
-void app_sm_start(void);
+/* Takes a copy of cfg; the credentials are read once at boot. */
+void app_sm_start(const app_config_t *cfg);
 
 /* Safe from any task, and from LVGL callbacks. Drops the event if the queue
  * is full rather than blocking a caller that may be the LVGL render task. */

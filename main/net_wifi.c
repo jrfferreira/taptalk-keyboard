@@ -1,8 +1,9 @@
 #include "net_wifi.h"
 
+#include <stdio.h>
 #include <string.h>
-#include <time.h>
 #include <sys/time.h>
+#include <time.h>
 
 #include "app_sm.h"
 #include "esp_check.h"
@@ -15,12 +16,6 @@
 #include "nvs_flash.h"
 #include "ui.h"
 
-#if __has_include("secrets.h")
-#include "secrets.h"
-#else
-#error "Copy main/secrets.example.h to main/secrets.h and fill in your Wi-Fi credentials. secrets.h is gitignored."
-#endif
-
 static const char *TAG = "net";
 
 /* Anything past this means SNTP has actually run; the epoch default is 1970. */
@@ -28,6 +23,7 @@ static const char *TAG = "net";
 #define SNTP_TIMEOUT_MS 20000
 
 static uint32_t s_retries;
+static bool s_sta_started;
 
 uint32_t net_wifi_retries(void) { return s_retries; }
 
@@ -42,7 +38,6 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
         ESP_LOGW(TAG, "disconnected, reason %d", d->reason);
         s_retries++;
         ui_set_wifi(false, "");
-        /* The state machine owns the retry policy, including when to stop. */
         app_sm_post(EV_WIFI_DOWN);
     }
 }
@@ -61,7 +56,7 @@ static void on_got_ip(void *arg, esp_event_base_t base, int32_t id, void *data)
     app_sm_post(EV_WIFI_UP);
 }
 
-esp_err_t net_wifi_init(void)
+esp_err_t net_init_common(void)
 {
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -72,7 +67,6 @@ esp_err_t net_wifi_init(void)
 
     ESP_RETURN_ON_ERROR(esp_netif_init(), TAG, "netif");
     ESP_RETURN_ON_ERROR(esp_event_loop_create_default(), TAG, "event loop");
-    esp_netif_create_default_wifi_sta();
 
     const wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_RETURN_ON_ERROR(esp_wifi_init(&cfg), TAG, "wifi init");
@@ -83,28 +77,33 @@ esp_err_t net_wifi_init(void)
     ESP_RETURN_ON_ERROR(
         esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_got_ip, NULL, NULL),
         TAG, "ip handler");
-
-    wifi_config_t wc = {0};
-    snprintf((char *)wc.sta.ssid, sizeof(wc.sta.ssid), "%s", TAPTALK_WIFI_SSID);
-    snprintf((char *)wc.sta.password, sizeof(wc.sta.password), "%s", TAPTALK_WIFI_PASSWORD);
-
-    ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), TAG, "mode");
-    ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_STA, &wc), TAG, "config");
     return ESP_OK;
 }
 
-esp_err_t net_wifi_connect(void)
+esp_err_t net_wifi_sta_connect(const app_config_t *cfg)
 {
-    /* esp_wifi_start() triggers STA_START, whose handler calls connect().
-     * On a retry the driver is already started, so connect directly. */
-    const esp_err_t err = esp_wifi_start();
-    if (err == ESP_ERR_WIFI_NOT_STOPPED || err == ESP_OK) {
-        if (err == ESP_ERR_WIFI_NOT_STOPPED) {
-            esp_wifi_connect();
-        }
-        return ESP_OK;
+    if (s_sta_started) {
+        /* A retry: the driver is already up, so just re-associate. */
+        return esp_wifi_connect();
     }
-    return err;
+
+    esp_netif_create_default_wifi_sta();
+
+    /* Not snprintf: wifi_config_t.sta.ssid is exactly 32 bytes with no room
+     * for a terminator, so snprintf would silently drop the last character of
+     * a legal 32-character SSID. The struct is zeroed, and esp_wifi treats a
+     * NUL-padded field as the SSID. Same for the 64-byte passphrase. */
+    wifi_config_t wc = {0};
+    memcpy(wc.sta.ssid, cfg->wifi_ssid, strnlen(cfg->wifi_ssid, sizeof(wc.sta.ssid)));
+    memcpy(wc.sta.password, cfg->wifi_pass, strnlen(cfg->wifi_pass, sizeof(wc.sta.password)));
+
+    ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), TAG, "sta mode");
+    ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_STA, &wc), TAG, "sta config");
+    ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "wifi start");
+
+    s_sta_started = true;
+    ESP_LOGI(TAG, "associating with \"%s\"", cfg->wifi_ssid);
+    return ESP_OK; /* STA_START fires, whose handler calls esp_wifi_connect() */
 }
 
 static void sntp_task(void *arg)

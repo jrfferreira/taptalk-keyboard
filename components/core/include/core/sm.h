@@ -12,6 +12,7 @@
 typedef enum {
     ST_BOOT,
     ST_PMIC_INIT,
+    ST_PROVISIONING, /* SoftAP + captive portal; no credentials yet */
     ST_WIFI_CONNECTING,
     ST_TIME_SYNC,
     ST_IDLE_READY,
@@ -44,10 +45,13 @@ typedef enum {
     EV_USB_UNMOUNT,
     EV_RETRY,
     EV_TIMEOUT,
+    EV_ENTER_SETUP, /* user asked for the portal, or Wi-Fi never worked */
+    EV_PROVISIONED, /* credentials accepted and written to NVS */
     EV_COUNT,
 } app_event_t;
 
 typedef struct {
+    bool provisioned; /* NVS holds an SSID */
     bool wifi_up;
     bool time_ok;
     bool usb_mounted;
@@ -72,6 +76,8 @@ enum {
     ACT_TYPE_ABORT     = 1u << 10,
     ACT_SHOW_ERROR     = 1u << 11,
     ACT_HINT_NOT_READY = 1u << 12,
+    ACT_PROV_START     = 1u << 13,
+    ACT_REBOOT         = 1u << 14,
 };
 
 typedef struct {

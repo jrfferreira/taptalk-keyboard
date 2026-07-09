@@ -4,8 +4,8 @@
 static sm_guards_t all_ready(void)
 {
     sm_guards_t g = {
-        .wifi_up = true, .time_ok = true, .usb_mounted = true, .clip_usable = true,
-        .wifi_retries = 0,
+        .provisioned = true, .wifi_up = true, .time_ok = true, .usb_mounted = true,
+        .clip_usable = true, .wifi_retries = 0,
     };
     return g;
 }
@@ -34,6 +34,58 @@ TEST_MAIN("sm", {
 
     o = sm_step(ST_PMIC_INIT, EV_PMIC_FAIL, &g);
     CHECK_EQ_INT(o.next, ST_ERROR);
+
+    /* --- provisioning --- */
+    /* A device with no stored SSID opens the portal instead of failing to
+     * associate five times against a network it was never told about. */
+    g = all_ready();
+    g.provisioned = false;
+    o = sm_step(ST_PMIC_INIT, EV_PMIC_OK, &g);
+    CHECK_EQ_INT(o.next, ST_PROVISIONING);
+    CHECK(o.actions & ACT_PROV_START);
+    CHECK(!(o.actions & ACT_WIFI_START));
+
+    o = sm_step(ST_PROVISIONING, EV_PROVISIONED, &g);
+    CHECK(o.actions & ACT_REBOOT);
+
+    /* The portal is reachable from every state a stuck user can be in. */
+    g = all_ready();
+    o = sm_step(ST_IDLE_READY, EV_ENTER_SETUP, &g);
+    CHECK_EQ_INT(o.next, ST_PROVISIONING);
+    CHECK(o.actions & ACT_PROV_START);
+    o = sm_step(ST_NOT_READY, EV_ENTER_SETUP, &g);
+    CHECK_EQ_INT(o.next, ST_PROVISIONING);
+    o = sm_step(ST_ERROR, EV_ENTER_SETUP, &g);
+    CHECK_EQ_INT(o.next, ST_PROVISIONING);
+    o = sm_step(ST_TIME_SYNC, EV_ENTER_SETUP, &g);
+    CHECK_EQ_INT(o.next, ST_PROVISIONING);
+    /* Above all, from a wrong password: without this the user waits out the
+     * retry ladder every single boot. */
+    o = sm_step(ST_WIFI_CONNECTING, EV_ENTER_SETUP, &g);
+    CHECK_EQ_INT(o.next, ST_PROVISIONING);
+    CHECK(o.actions & ACT_PROV_START);
+
+    /* Setup wins over retry when both could fire on the error screen. */
+    g = all_ready();
+    g.wifi_up = false;
+    o = sm_step(ST_ERROR, EV_ENTER_SETUP, &g);
+    CHECK_EQ_INT(o.next, ST_PROVISIONING);
+
+    /* An unprovisioned device must not auto-clear its error screen into an
+     * idle state it can never satisfy. */
+    g = all_ready();
+    g.provisioned = false;
+    o = sm_step(ST_ERROR, EV_TIMEOUT, &g);
+    CHECK_EQ_INT(o.next, ST_ERROR);
+    CHECK_EQ_INT(o.actions, ACT_NONE);
+
+    /* Recording must never begin while the portal is open. */
+    g = all_ready();
+    o = sm_step(ST_PROVISIONING, EV_BTN_PRESS, &g);
+    CHECK_EQ_INT(o.next, ST_PROVISIONING);
+    CHECK(!(o.actions & ACT_REC_START));
+
+    g = all_ready();
 
     o = sm_step(ST_WIFI_CONNECTING, EV_WIFI_UP, &g);
     CHECK_EQ_INT(o.next, ST_TIME_SYNC);
@@ -189,6 +241,11 @@ TEST_MAIN("sm", {
             CHECK(o.next >= 0 && o.next < ST_COUNT);
             if ((app_state_t)s == ST_IDLE_READY) {
                 CHECK(!(o.actions & ACT_REC_START));
+            }
+            /* The portal must never start a recording or an upload, in any
+             * state it can be entered from, under any guard combination. */
+            if ((app_state_t)s == ST_PROVISIONING) {
+                CHECK(!(o.actions & (ACT_REC_START | ACT_UPLOAD_START | ACT_TYPE_START)));
             }
         }
     }
