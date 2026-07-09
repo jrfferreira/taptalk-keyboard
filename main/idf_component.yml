@@ -1,0 +1,14 @@
+dependencies:
+  idf: ">=5.3"
+
+  # PINNED TO THE 1.x LINE ON PURPOSE.
+  #
+  # Waveshare ships two board revisions under one product name:
+  #   V1 -> SH8601 display + FT3168 touch   <- the board this repo targets
+  #   V2 -> CO5300 display + CST816 touch
+  #
+  # BSP 2.x depends on esp_lcd_co5300 and drops esp_lcd_sh8601 entirely, so an
+  # unpinned "add-dependency" resolves to 2.x and a V1 board boots to a black
+  # screen with no error. Check the sticker on the back of your board before
+  # touching this constraint; see docs/hardware-v1.md.
+  waveshare/esp32_s3_touch_amoled_1_8: "^1.1.4"

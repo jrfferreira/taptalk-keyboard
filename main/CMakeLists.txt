@@ -1,0 +1,19 @@
+idf_component_register(
+    SRCS
+        "app_main.c"
+        "app_sm.c"
+        "pmic.c"
+        "ui.c"
+        "audio_capture.c"
+        "net_wifi.c"
+    INCLUDE_DIRS "."
+    REQUIRES
+        core
+        esp_wifi
+        esp_netif
+        esp_app_format
+        nvs_flash
+        esp-tls
+        esp_timer
+        driver
+)

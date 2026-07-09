@@ -1,0 +1,43 @@
+CONFIG_IDF_TARGET="esp32s3"
+
+# 16 MB Winbond W25Q128 on the standard SPI bus.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# The module is an ESP32-S3R8: 8 MB of in-package OCTAL PSRAM. Quad mode here
+# would silently fail to detect it, and the 960 KB audio clip has nowhere else
+# to live.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_FREERTOS_HZ=1000
+
+# Chunk 1 keeps the console on USB-Serial-JTAG. Chunk 2 installs TinyUSB for
+# HID, which takes over the same USB PHY and kills this console; that build
+# must move the console to UART0 or accept losing it.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
+
+# TLS to api.openai.com chains to GTS Root R4 (cross-signed by GlobalSign).
+# The FULL bundle is used rather than the reduced filter because I could not
+# confirm GTS Root R4 is in the reduced set, and a missing root is a runtime
+# handshake failure with a misleading error.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+# The handshake buffers are large; freeing them between requests keeps the
+# 960 KB clip and LVGL's framebuffers from fighting over heap.
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+CONFIG_MBEDTLS_DYNAMIC_FREE_PEER_CERT=y
+CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y
+
+# LVGL: 16-bit colour matches the SH8601's RGB565 pipeline.
+CONFIG_LV_COLOR_DEPTH_16=y
+CONFIG_LV_FONT_MONTSERRAT_28=y

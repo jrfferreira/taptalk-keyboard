@@ -1,0 +1,33 @@
+TapTalk Keyboard
+================
+
+The original source in this repository is dedicated to the public domain under
+CC0 1.0 Universal. See LICENSE.
+
+Firmware binaries built from this repository statically link third-party
+components under the Apache License 2.0. Redistributing a binary requires
+retaining the following attributions.
+
+  ESP-IDF
+    Copyright (c) Espressif Systems (Shanghai) CO LTD
+    Apache License 2.0
+    https://github.com/espressif/esp-idf
+
+  Waveshare ESP32-S3-Touch-AMOLED-1.8 BSP, esp_lcd_sh8601
+    Copyright (c) Waveshare
+    Apache License 2.0
+    https://github.com/waveshareteam/Waveshare-ESP32-components
+
+  esp_lcd_touch_ft5x06, esp_codec_dev, esp_lvgl_port,
+  esp_io_expander_tca9554, esp_lcd_panel_io_additions
+    Copyright (c) Espressif Systems (Shanghai) CO LTD
+    Apache License 2.0
+
+  LVGL
+    Copyright (c) 2021 LVGL Kft
+    MIT License
+    https://github.com/lvgl/lvgl
+
+The AXP2101 register map used in main/pmic.c was derived from XPowersLib
+(MIT License, Copyright (c) 2022 lewis he) and the AXP2101 datasheet v1.4.
+No XPowersLib code is included.

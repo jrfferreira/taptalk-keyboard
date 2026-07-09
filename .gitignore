@@ -1,0 +1,19 @@
+# Never commit credentials.
+main/secrets.h
+
+# ESP-IDF build output
+build/
+sdkconfig
+sdkconfig.old
+managed_components/
+
+# Host test binaries and clang debug bundles
+test/host/test_wav
+test/host/test_textnorm
+test/host/test_keymap
+test/host/test_multipart
+test/host/test_sm
+test/host/gen_fixtures
+*.dSYM/
+
+.DS_Store
