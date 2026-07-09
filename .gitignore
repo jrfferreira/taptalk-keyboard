@@ -19,3 +19,6 @@ test/host/gen_fixtures
 *.dSYM/
 
 .DS_Store
+
+# CI builds the merged image; it is never committed
+web/firmware/*.bin
