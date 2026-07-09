@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TapTalk Keyboard — install</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 40px 20px;
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #101418; color: #e8eaed;
+    display: flex; justify-content: center;
+  }
+  main { max-width: 620px; width: 100%; }
+  h1 { font-size: 28px; margin: 0 0 8px; }
+  h2 { font-size: 17px; margin: 36px 0 10px; color: #e8eaed; }
+  .sub { color: #9aa0a6; margin: 0 0 32px; }
+  .install { margin: 28px 0; }
+  .note {
+    border-left: 3px solid #37474f; padding: 2px 0 2px 14px;
+    color: #bdc1c6; margin: 18px 0; font-size: 15px;
+  }
+  .warn { border-left-color: #f9a825; }
+  .danger { border-left-color: #c62828; }
+  code {
+    background: #1c2126; padding: 1px 6px; border-radius: 4px;
+    font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  ul, ol { padding-left: 22px; }
+  li { margin: 5px 0; }
+  a { color: #7cb3ff; }
+  footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid #2a3138;
+           color: #80868b; font-size: 14px; }
+  .unsupported { display: none; color: #f9a825; font-weight: 600; }
+  esp-web-install-button { --esp-tools-button-color: #2e7d32; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>TapTalk Keyboard</h1>
+<p class="sub">Hold a button, speak, release. Your words are typed into whatever
+computer the board is plugged into, as a USB keyboard.</p>
+
+<h2>Before you install</h2>
+<ul>
+  <li>A <strong>Waveshare ESP32-S3-Touch-AMOLED-1.8</strong>, revision <strong>V1</strong>.
+      Turn it over: the sticker must say <code>Display SH8601</code> and <code>Touch FT3168</code>.
+      A V2 board (CO5300 / CST816) will flash successfully and then show a black screen.</li>
+  <li><strong>Chrome or Edge, on a desktop.</strong> This page uses Web Serial, which
+      Safari and Firefox do not implement.</li>
+  <li>A USB-C cable that carries data, not just power.</li>
+  <li>A Wi-Fi network and an OpenAI API key. You enter both on the device after
+      flashing — nothing is baked into this firmware.</li>
+</ul>
+
+<div class="install">
+  <esp-web-install-button manifest="manifest.json">
+    <span slot="unsupported" class="unsupported" style="display:inline">
+      Your browser cannot talk to serial devices. Open this page in Chrome or Edge on a desktop.
+    </span>
+    <span slot="not-allowed" class="unsupported" style="display:inline">
+      This page must be served over HTTPS.
+    </span>
+  </esp-web-install-button>
+</div>
+
+<div class="note warn">
+  <strong>If no device appears in the chooser</strong>, the board is not in download
+  mode. It has <em>no reset button</em> — its EN pin is driven by the power-management
+  chip. Hold <strong>BOOT</strong>, tap <strong>PWR</strong>, release BOOT, then click
+  Install again.
+</div>
+
+<div class="note">
+  <strong>If the board seems stuck after flashing</strong>, unplug and replug the
+  USB-C cable. A USB-Serial-JTAG reset does not re-sample the boot strapping pins,
+  so the chip can sit in download mode until it is power-cycled.
+</div>
+
+<h2>After it flashes</h2>
+<ol>
+  <li>The screen shows a QR code and an 8-digit password.</li>
+  <li>Scan the code, or join the <code>TapTalk-XXXX</code> Wi-Fi from your phone.</li>
+  <li>A setup page opens by itself. Enter your Wi-Fi and paste your API key.</li>
+  <li>The device restarts and joins your network.</li>
+</ol>
+<p>Tap <strong>Setup</strong> on the main screen to change or erase those later.</p>
+
+<div class="note danger">
+  <strong>The API key is stored unencrypted.</strong> Anyone with this board and a
+  USB cable can read it back. Use a project-scoped key with a spend limit, and erase
+  it before lending the device.
+  <a href="https://github.com/jrfferreira/taptalk-keyboard/blob/main/docs/security.md">Why, and what it means.</a>
+</div>
+
+<h2>What this build does and does not do</h2>
+<p>This is the bring-up build. It powers the display, touch, microphone, Wi-Fi and
+clock, and it shows a live microphone level bar. It does <strong>not</strong> yet
+transcribe speech or type on a USB keyboard — that lands next.</p>
+<p>Deliberately, it installs no USB HID stack. Doing so would hand the USB port to
+the keyboard and take the serial console with it, which is also what makes this
+one-click installer work today.</p>
+
+<footer>
+  <a href="https://github.com/jrfferreira/taptalk-keyboard">Source</a> ·
+  <a href="https://github.com/jrfferreira/taptalk-keyboard/blob/main/docs/hardware-v1.md">Hardware notes</a> ·
+  <a href="https://github.com/jrfferreira/taptalk-keyboard/blob/main/docs/security.md">Security</a>
+</footer>
+
+</main>
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+</body>
+</html>

@@ -1,0 +1,99 @@
+name: Build firmware and deploy installer
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# A queued deploy should supersede a running one, but never cancel a deploy
+# that is already writing to Pages.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pure-core unit, fuzz and interop tests
+        run: make -C test/host test
+
+  build:
+    runs-on: ubuntu-latest
+    needs: host-tests
+    container: espressif/idf:v5.5
+    steps:
+      - name: Trust the workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - uses: actions/checkout@v4
+
+      # A published binary must never carry anyone's credentials. secrets.h is
+      # gitignored, so this should be impossible -- which is exactly why it is
+      # worth asserting rather than assuming.
+      - name: Refuse to build a release image from a tree with credentials
+        run: |
+          if [ -f main/secrets.h ]; then
+            echo "::error::main/secrets.h is present; a binary built from this tree would embed credentials"
+            exit 1
+          fi
+
+      - name: Build
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          idf.py build
+
+      # esptool in the v5.5 image is 4.9.0, which spells this merge_bin with an
+      # underscore and takes --flash_mode / --flash_freq / --flash_size.
+      # esptool 5.x renames both. Pinning the container pins the syntax.
+      - name: Merge into a single flashable image
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          mkdir -p web/firmware
+          esptool.py --chip esp32s3 merge_bin \
+            -o web/firmware/taptalk-v0.1.0-esp32s3-v1-merged.bin \
+            --flash_mode dio --flash_freq 80m --flash_size 16MB \
+            0x0     build/bootloader/bootloader.bin \
+            0x8000  build/partition_table/partition-table.bin \
+            0xf000  build/ota_data_initial.bin \
+            0x20000 build/taptalk-keyboard.bin
+
+      - name: Check the merged image is what the manifest promises
+        shell: bash
+        run: |
+          BIN=$(python3 -c "import json;print(json.load(open('web/manifest.json'))['builds'][0]['parts'][0]['path'])")
+          test -f "web/$BIN" || { echo "::error::manifest points at web/$BIN, which was not built"; exit 1; }
+          OFF=$(python3 -c "import json;print(json.load(open('web/manifest.json'))['builds'][0]['parts'][0]['offset'])")
+          test "$OFF" = "0" || { echo "::error::a merged image must be flashed at offset 0"; exit 1; }
+          # 0xE9 is the ESP image magic; a merged image starts with the bootloader.
+          head -c1 "web/$BIN" | od -An -tx1 | grep -q e9 || { echo "::error::merged image lacks the 0xE9 magic byte"; exit 1; }
+          ls -l "web/$BIN"
+
+      # The repo's Pages source starts out as "legacy" (serve the branch root,
+      # which renders README.md). This flips it to Actions so web/ is what
+      # actually gets published.
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
