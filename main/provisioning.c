@@ -678,6 +678,9 @@ esp_err_t provisioning_start(prov_info_t *info)
     ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA), TAG, "apsta mode");
     ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP, &wc), TAG, "ap config");
     ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "wifi start");
+    /* The setup-time brownout hit exactly here: a phone joining the AP triggers
+     * a TX burst that trips the AXP2101. Cap the power before anyone connects. */
+    net_wifi_limit_tx_power();
 
     /* Before the HTTP server, so the scan's channel hopping cannot disturb a
      * phone that has already joined. */
