@@ -18,6 +18,7 @@
 #include "beeper.h"
 #include "bsp/esp-bsp.h"
 #include "config_store.h"
+#include "diagnostics.h"
 #include "esp_app_desc.h"
 #include "esp_err.h"
 #include "esp_heap_caps.h"
@@ -136,6 +137,15 @@ static void display_start(void)
 
 void app_main(void)
 {
+    /* Our own tags to DEBUG; everyone else stays at INFO so the console is
+     * readable. CONFIG_LOG_MAXIMUM_LEVEL_DEBUG is what keeps the ESP_LOGD calls
+     * from being stripped at compile time. */
+    for (const char *const *tag = (const char *const[]){"ui", "sm", "audio", "stt", "hid", "beep",
+                                                        "diag", "prov", "net", "pmic", NULL};
+         *tag != NULL; tag++) {
+        esp_log_level_set(*tag, ESP_LOG_DEBUG);
+    }
+
     const esp_app_desc_t *app = esp_app_get_description();
     ESP_LOGI(TAG, "TapTalk %s (idf %s)", app->version, app->idf_ver);
     ESP_LOGI(TAG, "PSRAM free: %u KB", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
@@ -182,6 +192,8 @@ void app_main(void)
     /* Last, and deliberately so: this is the line that costs us the
      * USB-Serial-JTAG console. Everything worth watching has already logged. */
     ESP_ERROR_CHECK(hid_kbd_start());
+
+    ESP_ERROR_CHECK(diag_start());
 
     ESP_LOGI(TAG, "boot complete, free heap %u KB",
              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));

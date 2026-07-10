@@ -5,6 +5,7 @@
 
 #include "app_sm.h"
 #include "beeper.h"
+#include "diagnostics.h"
 #include "bsp/esp-bsp.h"
 #include "esp_check.h"
 #include "esp_log.h"
@@ -20,16 +21,22 @@ static const char *TAG = "ui";
 #endif
 
 /* Panel is 368x448. */
-#define BTN_D 216
-#define WAVE_BARS 27
-#define WAVE_BAR_W 4
+#define BTN_D 228
+#define WAVE_BARS 14
+#define WAVE_BAR_W 3
 #define WAVE_BAR_GAP 4
-#define WAVE_H 64
-#define WAVE_MIN 4
-#define ICON_HIT 56 /* transparent touch target around the settings glyph */
+#define WAVE_H 38
+#define WAVE_MIN 3
+#define ICON_HIT 72   /* transparent touch target; the glyph is smaller than the tap */
+#define EDGE 16       /* inset from the rounded corners of the panel */
 
-#define C_BG_TOP   0x05070A
-#define C_BG_BOT   0x141E28
+/* AMOLED: a true-black top costs no power and gives the gradient somewhere to
+ * come from. Four stops rather than two, because two across 448 px bands
+ * visibly on a panel this contrasty. */
+#define C_BG_0 0x000000
+#define C_BG_1 0x060B12
+#define C_BG_2 0x0D1826
+#define C_BG_3 0x16283A
 #define C_IDLE_TOP 0x5CF0B0
 #define C_IDLE_BOT 0x1B8560
 #define C_REC_TOP  0xFF7A6E
@@ -44,6 +51,7 @@ static const char *TAG = "ui";
 #define C_INK      0x04150E
 #define C_ON       0x3DDC97
 #define C_OFF      0x39434D
+#define C_COG      0x6B7A88
 #define C_MSG      0xF5B638
 #define C_STATUS   0x8A97A3
 
@@ -134,6 +142,7 @@ static void set_grad_pressed(lv_obj_t *o, uint32_t top, uint32_t bot)
 static void ui_tick(lv_timer_t *timer)
 {
     (void)timer;
+    diag_beat_ui(); /* the only proof this task is still alive */
 
     ui_model_t m;
     model_lock();
@@ -244,6 +253,7 @@ static void sheet_close(lv_event_t *e)
 static void on_press(lv_event_t *e)
 {
     (void)e;
+    ESP_LOGD(TAG, "touch: press");
     beeper_play(BEEP_PRESS);
     app_sm_post(EV_BTN_PRESS);
 }
@@ -251,6 +261,7 @@ static void on_press(lv_event_t *e)
 static void on_release(lv_event_t *e)
 {
     (void)e;
+    ESP_LOGD(TAG, "touch: release");
     beeper_play(BEEP_RELEASE);
     app_sm_post(EV_BTN_RELEASE);
 }
@@ -258,82 +269,14 @@ static void on_release(lv_event_t *e)
 static void on_press_lost(lv_event_t *e)
 {
     (void)e;
+    ESP_LOGW(TAG, "touch: press LOST (finger slid off, or the panel stopped reporting)");
     beeper_play(BEEP_RELEASE);
     app_sm_post(EV_PRESS_LOST);
 }
 static void on_setup(lv_event_t *e) { (void)e; app_sm_post(EV_ENTER_SETUP); }
 
-/* A microphone, drawn from primitives: LVGL's symbol font has no mic glyph. */
-static void build_mic(lv_obj_t *parent)
-{
-    lv_obj_t *capsule = lv_obj_create(parent);
-    lv_obj_remove_style_all(capsule);
-    lv_obj_set_size(capsule, 22, 40);
-    lv_obj_align(capsule, LV_ALIGN_CENTER, 0, -14);
-    lv_obj_set_style_radius(capsule, 11, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(capsule, lv_color_hex(C_INK), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(capsule, LV_OPA_COVER, LV_PART_MAIN);
 
-    /* The cradle: an arc with its indicator and knob stripped away. */
-    lv_obj_t *arc = lv_arc_create(parent);
-    lv_obj_remove_style(arc, NULL, LV_PART_INDICATOR);
-    lv_obj_remove_style(arc, NULL, LV_PART_KNOB);
-    lv_obj_remove_flag(arc, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(arc, 56, 56);
-    lv_obj_align(arc, LV_ALIGN_CENTER, 0, -12);
-    lv_arc_set_bg_angles(arc, 20, 160);
-    lv_obj_set_style_arc_width(arc, 5, LV_PART_MAIN);
-    lv_obj_set_style_arc_color(arc, lv_color_hex(C_INK), LV_PART_MAIN);
-    lv_obj_set_style_arc_rounded(arc, true, LV_PART_MAIN);
 
-    lv_obj_t *stem = lv_obj_create(parent);
-    lv_obj_remove_style_all(stem);
-    lv_obj_set_size(stem, 5, 10);
-    lv_obj_align(stem, LV_ALIGN_CENTER, 0, 20);
-    lv_obj_set_style_radius(stem, 2, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(stem, lv_color_hex(C_INK), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(stem, LV_OPA_COVER, LV_PART_MAIN);
-}
-
-static lv_obj_t *build_icon(lv_obj_t *parent, const char *sym, int32_t dx, lv_event_cb_t cb)
-{
-    lv_obj_t *lbl = lv_label_create(parent);
-    lv_label_set_text(lbl, sym);
-    lv_obj_set_style_text_color(lbl, lv_color_hex(C_OFF), LV_PART_MAIN);
-    lv_obj_align(lbl, LV_ALIGN_BOTTOM_MID, dx, -26);
-
-    if (cb != NULL) {
-        /* A 24px glyph is not a touch target. Give it an invisible 56px one. */
-        lv_obj_t *hit = lv_obj_create(parent);
-        lv_obj_remove_style_all(hit);
-        lv_obj_set_size(hit, ICON_HIT, ICON_HIT);
-        lv_obj_align(hit, LV_ALIGN_BOTTOM_MID, dx, -26 + ICON_HIT / 2 - 8);
-        lv_obj_add_flag(hit, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_event_cb(hit, cb, LV_EVENT_CLICKED, NULL);
-    }
-    return lbl;
-}
-
-/* The badge sits at the top, alone, where nothing else competes for the eye.
- * It is only ever visible when something is wrong. */
-static void build_badge(void)
-{
-    s_badge = lv_label_create(s_main);
-    lv_label_set_text(s_badge, LV_SYMBOL_WARNING);
-    lv_obj_set_style_text_font(s_badge, FONT_BIG, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_badge, lv_color_hex(C_MSG), LV_PART_MAIN);
-    lv_obj_align(s_badge, LV_ALIGN_TOP_MID, 0, 20);
-    lv_obj_add_flag(s_badge, LV_OBJ_FLAG_HIDDEN);
-
-    /* A 28 px glyph is not a touch target. */
-    s_badge_hit = lv_obj_create(s_main);
-    lv_obj_remove_style_all(s_badge_hit);
-    lv_obj_set_size(s_badge_hit, ICON_HIT, ICON_HIT);
-    lv_obj_align(s_badge_hit, LV_ALIGN_TOP_MID, 0, 6);
-    lv_obj_add_flag(s_badge_hit, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(s_badge_hit, sheet_open, LV_EVENT_CLICKED, NULL);
-    lv_obj_add_flag(s_badge_hit, LV_OBJ_FLAG_HIDDEN);
-}
 
 /* Tapping the badge raises this. It is the only place the device tells you,
  * in words, that the key was rejected or the account is out of credit. */
@@ -387,78 +330,145 @@ static void build_main(void)
 {
     s_main = lv_obj_create(NULL);
     lv_obj_remove_flag(s_main, LV_OBJ_FLAG_SCROLLABLE);
-    /* A screen from lv_obj_create(NULL) is LV_OPA_TRANSP unless a theme covers
-     * it. Setting bg_color alone paints nothing and the previous frame shows
-     * through -- which is exactly what the first hardware boot looked like. */
-    set_grad(s_main, C_BG_TOP, C_BG_BOT);
 
+    /* A screen from lv_obj_create(NULL) is LV_OPA_TRANSP unless a theme covers
+     * it, and a transparent screen composites against whatever was in the
+     * buffer last. Hence the explicit opacity below.
+     *
+     * Four stops, not two. On an AMOLED this contrasty, a two-stop ramp across
+     * 448 px bands visibly in the dark end. The top stop is true black, which
+     * on OLED means those pixels are simply off. */
+    static lv_color_t grad_colors[4];
+    static lv_opa_t   grad_opas[4];
+    static lv_grad_dsc_t bg_grad;
+    grad_colors[0] = lv_color_hex(C_BG_0);
+    grad_colors[1] = lv_color_hex(C_BG_1);
+    grad_colors[2] = lv_color_hex(C_BG_2);
+    grad_colors[3] = lv_color_hex(C_BG_3);
+    for (int i = 0; i < 4; i++) {
+        grad_opas[i] = LV_OPA_COVER;
+        bg_grad.stops[i].color = grad_colors[i];
+        bg_grad.stops[i].opa   = grad_opas[i];
+    }
+    /* Weighted so the black holds most of the panel and the colour lifts only
+     * near the bottom, under the button. */
+    bg_grad.stops[0].frac = 0;
+    bg_grad.stops[1].frac = 120;
+    bg_grad.stops[2].frac = 205;
+    bg_grad.stops[3].frac = 255;
+    bg_grad.stops_count   = 4;
+    bg_grad.dir           = LV_GRAD_DIR_VER;
+    lv_obj_set_style_bg_grad(s_main, &bg_grad, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_main, LV_OPA_COVER, LV_PART_MAIN);
+
+    /* ---- the button owns the middle ---- */
     s_btn = lv_button_create(s_main);
     lv_obj_set_size(s_btn, BTN_D, BTN_D);
-    lv_obj_align(s_btn, LV_ALIGN_CENTER, 0, -46);
+    lv_obj_align(s_btn, LV_ALIGN_CENTER, 0, -8);
     lv_obj_set_style_radius(s_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_btn, 0, LV_PART_MAIN);
-    /* A soft glow, not a drop shadow. LVGL blurs box shadows in software and
-     * the cost grows with the blur radius; 40 px around a 216 px circle is
-     * millions of operations per repaint. */
+    /* 20 px, not 40: the shadow is blurred in software, and its bounding box
+     * is what gets re-rendered. */
     lv_obj_set_style_shadow_width(s_btn, 20, LV_PART_MAIN);
+    lv_obj_set_style_shadow_opa(s_btn, LV_OPA_30, LV_PART_MAIN);
     lv_obj_set_style_shadow_spread(s_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_shadow_opa(s_btn, LV_OPA_20, LV_PART_MAIN);
-    set_grad(s_btn, C_IDLE_TOP, C_IDLE_BOT);
-    /* Animate the pressed style rather than snapping to it. LVGL runs this in
-     * the render task on the touch event, so it costs nothing per tick. */
-    static const lv_style_prop_t press_props[] = {
-        LV_STYLE_BG_COLOR, LV_STYLE_BG_GRAD_COLOR,
-        LV_STYLE_TRANSFORM_SCALE_X, LV_STYLE_TRANSFORM_SCALE_Y, 0,
-    };
+
+    /* Animate the colour swap, and ONLY the colour swap.
+     *
+     * transform_scale used to live here. Any non-identity transform makes LVGL
+     * render the object into its own layer: 228 px button + 20 px shadow at
+     * RGB565 is ~140 KB, allocated above the 32 KB internal threshold and
+     * therefore in PSRAM, re-rendered on every invalidation. The LVGL task
+     * wedged on it. Everything else kept running, which is why the log looked
+     * healthy while the screen was frozen and touch was dead. */
+    static const lv_style_prop_t press_props[] = {LV_STYLE_BG_COLOR, LV_STYLE_BG_GRAD_COLOR, 0};
     static lv_style_transition_dsc_t press_tr;
     lv_style_transition_dsc_init(&press_tr, press_props, lv_anim_path_ease_out, PRESS_MS, 0, NULL);
     lv_obj_set_style_transition(s_btn, &press_tr, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_transition(s_btn, &press_tr, LV_PART_MAIN | LV_STATE_PRESSED);
-    /* 256 is 1.0. A 3% shrink reads as "it moved" without looking like a bug. */
-    lv_obj_set_style_transform_scale(s_btn, 248, LV_PART_MAIN | LV_STATE_PRESSED);
 
     lv_obj_add_event_cb(s_btn, on_press, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(s_btn, on_release, LV_EVENT_RELEASED, NULL);
     lv_obj_add_event_cb(s_btn, on_press_lost, LV_EVENT_PRESS_LOST, NULL);
 
-    build_mic(s_btn);
+    lv_obj_t *mic = lv_label_create(s_btn);
+    lv_label_set_text(mic, LV_SYMBOL_AUDIO);
+    lv_obj_set_style_text_font(mic, FONT_BIG, LV_PART_MAIN);
+    lv_obj_set_style_text_color(mic, lv_color_hex(C_INK), LV_PART_MAIN);
+    lv_obj_align(mic, LV_ALIGN_CENTER, 0, -20);
 
     s_timer = lv_label_create(s_btn);
     lv_obj_set_style_text_font(s_timer, FONT_BIG, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_timer, lv_color_hex(C_INK), LV_PART_MAIN);
-    lv_obj_align(s_timer, LV_ALIGN_CENTER, 0, 54);
+    lv_obj_align(s_timer, LV_ALIGN_CENTER, 0, 34);
     lv_obj_add_flag(s_timer, LV_OBJ_FLAG_HIDDEN);
 
-    /* The waveform. Left-mid alignment keeps every bar centred on one axis as
-     * its height changes, so it grows both ways like a real level meter. */
+    /* ---- four corners, Apple Watch style ----
+     * The panel's corners are rounded, so these are inset diagonally rather
+     * than pinned to the literal corner where the glass curves away. */
+
+    s_ico_usb = lv_label_create(s_main);
+    lv_label_set_text(s_ico_usb, LV_SYMBOL_USB);
+    lv_obj_set_style_text_font(s_ico_usb, FONT_BIG, LV_PART_MAIN);
+    lv_obj_align(s_ico_usb, LV_ALIGN_TOP_LEFT, EDGE + 20, EDGE + 12);
+
+    s_ico_wifi = lv_label_create(s_main);
+    lv_label_set_text(s_ico_wifi, LV_SYMBOL_WIFI);
+    lv_obj_set_style_text_font(s_ico_wifi, FONT_BIG, LV_PART_MAIN);
+    lv_obj_align(s_ico_wifi, LV_ALIGN_TOP_RIGHT, -(EDGE + 20), EDGE + 12);
+
+    /* Bottom-left: the level meter, as a compact complication. */
     lv_obj_t *wave = lv_obj_create(s_main);
     lv_obj_remove_style_all(wave);
     lv_obj_set_size(wave, WAVE_BARS * (WAVE_BAR_W + WAVE_BAR_GAP), WAVE_H);
-    lv_obj_align(wave, LV_ALIGN_CENTER, 0, 126);
+    lv_obj_align(wave, LV_ALIGN_BOTTOM_LEFT, EDGE + 12, -(EDGE + 14));
     lv_obj_remove_flag(wave, LV_OBJ_FLAG_SCROLLABLE);
-
     for (int i = 0; i < WAVE_BARS; i++) {
         lv_obj_t *b = lv_obj_create(wave);
         lv_obj_remove_style_all(b);
         lv_obj_set_size(b, WAVE_BAR_W, WAVE_MIN);
         lv_obj_align(b, LV_ALIGN_LEFT_MID, i * (WAVE_BAR_W + WAVE_BAR_GAP), 0);
-        lv_obj_set_style_radius(b, WAVE_BAR_W / 2, LV_PART_MAIN);
+        lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, LV_PART_MAIN);
         lv_obj_set_style_bg_color(b, lv_color_hex(C_ON), LV_PART_MAIN);
         lv_obj_set_style_bg_opa(b, LV_OPA_70, LV_PART_MAIN);
         s_wave[i] = b;
     }
 
-    /* Transient status: dim, small, easy to ignore. */
+    /* Bottom-right: setup. A 72 px transparent tap target around a 28 px cog,
+     * because a fingertip is about 9 mm and the glyph is 3. */
+    lv_obj_t *cog_hit = lv_obj_create(s_main);
+    lv_obj_remove_style_all(cog_hit);
+    lv_obj_set_size(cog_hit, ICON_HIT, ICON_HIT);
+    lv_obj_align(cog_hit, LV_ALIGN_BOTTOM_RIGHT, -EDGE, -EDGE);
+    lv_obj_add_flag(cog_hit, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(cog_hit, on_setup, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *cog = lv_label_create(cog_hit);
+    lv_label_set_text(cog, LV_SYMBOL_SETTINGS);
+    lv_obj_set_style_text_font(cog, FONT_BIG, LV_PART_MAIN);
+    lv_obj_set_style_text_color(cog, lv_color_hex(C_COG), LV_PART_MAIN);
+    lv_obj_center(cog);
+
+    /* ---- transient status, and the error badge ---- */
     s_status = lv_label_create(s_main);
     lv_obj_set_style_text_color(s_status, lv_color_hex(C_STATUS), LV_PART_MAIN);
-    lv_obj_align(s_status, LV_ALIGN_BOTTOM_MID, 0, -66);
+    lv_obj_align(s_status, LV_ALIGN_CENTER, 0, 128);
     lv_obj_add_flag(s_status, LV_OBJ_FLAG_HIDDEN);
 
-    s_ico_usb  = build_icon(s_main, LV_SYMBOL_USB, -70, NULL);
-    s_ico_wifi = build_icon(s_main, LV_SYMBOL_WIFI, 0, NULL);
-    (void)build_icon(s_main, LV_SYMBOL_SETTINGS, 70, on_setup);
+    s_badge_hit = lv_obj_create(s_main);
+    lv_obj_remove_style_all(s_badge_hit);
+    lv_obj_set_size(s_badge_hit, ICON_HIT, ICON_HIT);
+    lv_obj_align(s_badge_hit, LV_ALIGN_TOP_MID, 0, EDGE - 4);
+    lv_obj_add_flag(s_badge_hit, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_badge_hit, sheet_open, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_flag(s_badge_hit, LV_OBJ_FLAG_HIDDEN);
 
-    build_badge();
+    s_badge = lv_label_create(s_main);
+    lv_label_set_text(s_badge, LV_SYMBOL_WARNING);
+    lv_obj_set_style_text_font(s_badge, FONT_BIG, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_badge, lv_color_hex(C_MSG), LV_PART_MAIN);
+    lv_obj_align(s_badge, LV_ALIGN_TOP_MID, 0, EDGE + 10);
+    lv_obj_add_flag(s_badge, LV_OBJ_FLAG_HIDDEN);
+
     build_sheet();
 }
 
@@ -473,7 +483,7 @@ void ui_show_setup(const prov_info_t *info)
 
     s_setup = lv_obj_create(NULL);
     lv_obj_remove_flag(s_setup, LV_OBJ_FLAG_SCROLLABLE);
-    set_grad(s_setup, C_BG_TOP, C_BG_BOT);
+    set_grad(s_setup, C_BG_0, C_BG_3);
 
     lv_obj_t *t = lv_label_create(s_setup);
     lv_label_set_text(t, "Setup");

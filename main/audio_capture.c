@@ -12,6 +12,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "beeper.h"
+#include "diagnostics.h"
 #include "ui.h"
 
 static const char *TAG = "audio";
@@ -55,6 +56,8 @@ static void capture_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
+
+        diag_beat_audio();
 
         const int peak = peak_of(s_chunk, CHUNK_SAMPLES);
 
@@ -159,6 +162,8 @@ esp_err_t audio_capture_start(void)
 void audio_record_begin(void)
 {
     s_trim_bytes = beeper_available() ? TRIM_BYTES : 0;
+    ESP_LOGI(TAG, "record: begin (discarding %u bytes = %u ms of press tone)",
+             (unsigned)s_trim_bytes, (unsigned)(s_trim_bytes / 32));
     s_cursor    = 0;
     s_clip_ms   = 0;
     s_clip_peak = 0;
@@ -172,8 +177,11 @@ void audio_record_end(void)
      * written straight into s_clip + 44, so no copy is needed. */
     wav_write_header(s_clip, WAV_HEADER_SIZE, (uint32_t)s_cursor, AUDIO_SAMPLE_RATE, AUDIO_BITS,
                      AUDIO_CHANNELS);
-    ESP_LOGI(TAG, "clip: %u ms, %u bytes, peak %d", (unsigned)s_clip_ms, (unsigned)s_cursor,
-             s_clip_peak);
+    ESP_LOGI(TAG, "record: end -- %u ms, %u bytes, peak %d/32767 (%s)", (unsigned)s_clip_ms,
+             (unsigned)s_cursor, s_clip_peak,
+             audio_clip_usable() ? "usable"
+             : s_clip_ms < AUDIO_MIN_CLIP_MS ? "TOO SHORT"
+                                             : "TOO QUIET");
 }
 
 bool audio_clip_usable(void)

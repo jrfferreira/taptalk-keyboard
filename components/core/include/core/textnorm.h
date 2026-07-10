@@ -18,7 +18,14 @@ size_t utf8_next(const char *s, size_t len, uint32_t *codepoint);
 uint32_t textnorm_deaccent(uint32_t codepoint);
 
 /* Trim leading/trailing whitespace, collapse internal whitespace runs to a
- * single space, and drop C0 control characters other than '\n' and '\t'.
+ * single space, and drop C0 control characters.
+ *
+ * Newline and tab count as whitespace, so they are trimmed and collapsed like
+ * any other. That is load-bearing: the keymap turns '\n' into Enter, and
+ * OpenAI's response_format=text terminates every transcript with one. A
+ * transcript of "hello\n" must type `hello`, not `hello` followed by Enter into
+ * whatever form the cursor is in. A transcript of "\n" must come out empty.
+ *
  * Copies at most `out_cap - 1` bytes and always NUL-terminates.
  * Returns the length written, excluding the NUL. */
 size_t textnorm_clean(const char *in, size_t in_len, char *out, size_t out_cap);

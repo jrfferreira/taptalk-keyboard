@@ -157,3 +157,33 @@ const char *sm_state_name(app_state_t state)
     default:                 return "?";
     }
 }
+
+const char *sm_event_name(app_event_t event)
+{
+    switch (event) {
+    case EV_NONE:        return "NONE";
+    case EV_PMIC_OK:     return "PMIC_OK";
+    case EV_PMIC_FAIL:   return "PMIC_FAIL";
+    case EV_WIFI_UP:     return "WIFI_UP";
+    case EV_WIFI_DOWN:   return "WIFI_DOWN";
+    case EV_TIME_OK:     return "TIME_OK";
+    case EV_TIME_FAIL:   return "TIME_FAIL";
+    case EV_BTN_PRESS:   return "BTN_PRESS";
+    case EV_BTN_RELEASE: return "BTN_RELEASE";
+    case EV_PRESS_LOST:  return "PRESS_LOST";
+    case EV_REC_MAX:     return "REC_MAX";
+    case EV_STT_OK:      return "STT_OK";
+    case EV_STT_EMPTY:   return "STT_EMPTY";
+    case EV_STT_FAIL:    return "STT_FAIL";
+    case EV_TYPE_DONE:   return "TYPE_DONE";
+    case EV_TYPE_ABORT:  return "TYPE_ABORT";
+    case EV_USB_MOUNT:   return "USB_MOUNT";
+    case EV_USB_UNMOUNT: return "USB_UNMOUNT";
+    case EV_RETRY:       return "RETRY";
+    case EV_TIMEOUT:     return "TIMEOUT";
+    case EV_ENTER_SETUP: return "ENTER_SETUP";
+    case EV_PROVISIONED: return "PROVISIONED";
+    case EV_COUNT:
+    default:             return "?";
+    }
+}
