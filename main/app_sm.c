@@ -4,6 +4,7 @@
 #include "beeper.h"
 #include "diagnostics.h"
 #include "hid_kbd.h"
+#include "core/hid_codes.h"
 #include "stt_client.h"
 #include "config_store.h"
 #include "esp_log.h"
@@ -31,6 +32,10 @@ static app_config_t s_cfg;
  * at the moment it is asked. Written only by the sm task. */
 static bool s_wifi_up, s_time_ok, s_usb;
 
+/* True from the moment a dictation finishes typing until it is sent, undone, or
+ * superseded by the next recording. Gates the Send and Undo buttons. */
+static bool s_has_pending;
+
 app_state_t app_sm_state(void) { return s_state; }
 
 void app_sm_post(app_event_t event)
@@ -55,9 +60,24 @@ static sm_guards_t current_guards(void)
         /* A host that has enumerated us, not merely a cable delivering power. */
         .usb_mounted  = s_usb,
         .clip_usable  = audio_clip_usable(),
+        .has_pending  = s_has_pending,
         .wifi_retries = net_wifi_retries(),
     };
     return g;
+}
+
+/* The configured Send button maps to a single chord: Enter, optionally held
+ * under a modifier the way chat apps bind "send". */
+static void send_key_chord(send_key_t sk, uint8_t *mod, uint8_t *key)
+{
+    *key = HID_KEY_ENTER;
+    switch (sk) {
+    case SEND_KEY_CMD_ENTER:   *mod = HID_MOD_LGUI;   break;
+    case SEND_KEY_CTRL_ENTER:  *mod = HID_MOD_LCTRL;  break;
+    case SEND_KEY_SHIFT_ENTER: *mod = HID_MOD_LSHIFT; break;
+    case SEND_KEY_ENTER:
+    default:                   *mod = HID_MOD_NONE;   break;
+    }
 }
 
 static void run_actions(uint32_t actions)
@@ -119,6 +139,18 @@ static void run_actions(uint32_t actions)
     }
     if (actions & ACT_TYPE_ABORT) {
         hid_kbd_abort();
+    }
+    if (actions & ACT_SEND_KEY) {
+        uint8_t mod, key;
+        send_key_chord(s_cfg.send_key, &mod, &key);
+        if (hid_kbd_send(mod, key) != ESP_OK) {
+            app_sm_post(EV_TYPE_ABORT);
+        }
+    }
+    if (actions & ACT_UNDO) {
+        if (hid_kbd_undo() != ESP_OK) {
+            app_sm_post(EV_TYPE_ABORT);
+        }
     }
     if (actions & ACT_HINT_QUIET) {
         /* Before ACT_CLIP_DISCARD below wipes the reason. This is what turns
@@ -211,8 +243,22 @@ static void sm_task(void *arg)
                      (unsigned)out.actions, g.wifi_up, g.time_ok, g.usb_mounted, g.clip_usable);
         }
 
+        const app_state_t prev = s_state;
         s_state = out.next;
+
+        /* A dictation is Send/Undo-able from the moment it finishes typing
+         * until it is acted on or a new recording supersedes it. Typed-then-
+         * done is the only thing that arms it; entering send/undo or a fresh
+         * recording clears it. */
+        if (ev == EV_TYPE_DONE && prev == ST_TYPING) {
+            s_has_pending = true;
+        } else if (out.next == ST_SENDING ||
+                   (out.next == ST_RECORDING && prev != ST_RECORDING)) {
+            s_has_pending = false;
+        }
+
         ui_set_state(s_state);
+        ui_set_pending(s_has_pending);
 
         /* Outcomes the action mask cannot express: a finished burst should
          * clear "Typing…", and a silent clip deserves to say so rather than

@@ -19,6 +19,7 @@ typedef enum {
     ST_RECORDING,
     ST_UPLOADING,
     ST_TYPING,
+    ST_SENDING,   /* firing the Send chord or the Undo backspaces */
     ST_NOT_READY, /* was ready, lost a precondition */
     ST_ERROR,
     ST_COUNT,
@@ -35,6 +36,8 @@ typedef enum {
     EV_BTN_PRESS,
     EV_BTN_RELEASE,
     EV_PRESS_LOST, /* finger slid off the button */
+    EV_SEND,       /* Send: submit the last dictation with the configured chord */
+    EV_UNDO,       /* Undo: backspace the last dictation away */
     EV_REC_MAX,    /* hit the duration cap, finger may still be down */
     EV_STT_OK,
     EV_STT_EMPTY,
@@ -57,6 +60,7 @@ typedef struct {
     bool time_ok;
     bool usb_mounted;
     bool clip_usable; /* long enough, and not silence */
+    bool has_pending; /* a dictation was just typed and can be sent or undone */
     uint32_t wifi_retries;
 } sm_guards_t;
 
@@ -80,6 +84,8 @@ enum {
     ACT_PROV_START     = 1u << 13,
     ACT_REBOOT         = 1u << 14,
     ACT_HINT_QUIET     = 1u << 15, /* clip dropped: tell the user why */
+    ACT_SEND_KEY       = 1u << 16, /* strike the configured Send chord */
+    ACT_UNDO           = 1u << 17, /* backspace the last dictation away */
 };
 
 typedef struct {

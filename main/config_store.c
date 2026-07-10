@@ -13,6 +13,7 @@ static const char *TAG = "config";
 #define K_SSID "ssid"
 #define K_PASS "pass"
 #define K_KEY  "apikey"
+#define K_SENDKEY "sendkey"
 
 /* Optional developer convenience: if main/secrets.h exists it seeds NVS on
  * first boot, so a bench build skips the portal. It is gitignored and must
@@ -50,6 +51,15 @@ esp_err_t config_load(app_config_t *cfg)
         ESP_RETURN_ON_ERROR(get_str(h, K_SSID, cfg->wifi_ssid, sizeof(cfg->wifi_ssid)), TAG, "ssid");
         ESP_RETURN_ON_ERROR(get_str(h, K_PASS, cfg->wifi_pass, sizeof(cfg->wifi_pass)), TAG, "pass");
         ESP_RETURN_ON_ERROR(get_str(h, K_KEY, cfg->api_key, sizeof(cfg->api_key)), TAG, "apikey");
+
+        /* Absent on a device provisioned before Send existed: fall back to a
+         * bare Enter, and ignore a corrupt value the same way. */
+        uint8_t sk = SEND_KEY_ENTER;
+        if (nvs_get_u8(h, K_SENDKEY, &sk) != ESP_OK || sk >= SEND_KEY_COUNT) {
+            sk = SEND_KEY_ENTER;
+        }
+        cfg->send_key = (send_key_t)sk;
+
         nvs_close(h);
     }
 
@@ -80,6 +90,7 @@ esp_err_t config_save(const app_config_t *cfg)
     esp_err_t err = nvs_set_str(h, K_SSID, cfg->wifi_ssid);
     if (err == ESP_OK) err = nvs_set_str(h, K_PASS, cfg->wifi_pass);
     if (err == ESP_OK) err = nvs_set_str(h, K_KEY, cfg->api_key);
+    if (err == ESP_OK) err = nvs_set_u8(h, K_SENDKEY, (uint8_t)cfg->send_key);
     if (err == ESP_OK) err = nvs_commit(h);
 
     nvs_close(h);

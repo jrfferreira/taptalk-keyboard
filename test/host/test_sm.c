@@ -5,7 +5,7 @@ static sm_guards_t all_ready(void)
 {
     sm_guards_t g = {
         .provisioned = true, .wifi_up = true, .time_ok = true, .usb_mounted = true,
-        .clip_usable = true, .wifi_retries = 0,
+        .clip_usable = true, .has_pending = true, .wifi_retries = 0,
     };
     return g;
 }
@@ -223,6 +223,47 @@ TEST_MAIN("sm", {
     CHECK_EQ_INT(o.next, ST_WIFI_CONNECTING);
     o = sm_step(ST_ERROR, EV_TIMEOUT, ready());
     CHECK_EQ_INT(o.next, ST_IDLE_READY);
+
+    /* --- Send and Undo act on a just-typed dictation --- */
+    /* A finished transcript leaves something pending; Send fires the chord and
+     * parks in ST_SENDING until the typing task reports back. */
+    g = all_ready();
+    o = sm_step(ST_IDLE_READY, EV_SEND, &g);
+    CHECK_EQ_INT(o.next, ST_SENDING);
+    CHECK(o.actions & ACT_SEND_KEY);
+    CHECK(!(o.actions & ACT_UNDO));
+
+    o = sm_step(ST_IDLE_READY, EV_UNDO, &g);
+    CHECK_EQ_INT(o.next, ST_SENDING);
+    CHECK(o.actions & ACT_UNDO);
+    CHECK(!(o.actions & ACT_SEND_KEY));
+
+    /* Nothing pending: the buttons are dimmed, and a stray tap is inert. */
+    g.has_pending = false;
+    o = sm_step(ST_IDLE_READY, EV_SEND, &g);
+    CHECK_EQ_INT(o.next, ST_IDLE_READY);
+    CHECK_EQ_INT(o.actions, ACT_NONE);
+    o = sm_step(ST_IDLE_READY, EV_UNDO, &g);
+    CHECK_EQ_INT(o.next, ST_IDLE_READY);
+    CHECK_EQ_INT(o.actions, ACT_NONE);
+
+    /* No host to type into: refuse rather than fire into nothing. */
+    g = all_ready();
+    g.usb_mounted = false;
+    o = sm_step(ST_IDLE_READY, EV_SEND, &g);
+    CHECK_EQ_INT(o.next, ST_IDLE_READY);
+    CHECK_EQ_INT(o.actions, ACT_NONE);
+
+    /* The chord (or the backspaces) finishing lands back on idle with no clip
+     * to discard; a host yanked mid-send is an error, same as typing. */
+    o = sm_step(ST_SENDING, EV_TYPE_DONE, ready());
+    CHECK_EQ_INT(o.next, ST_IDLE_READY);
+    CHECK_EQ_INT(o.actions, ACT_NONE);
+    o = sm_step(ST_SENDING, EV_TYPE_ABORT, ready());
+    CHECK_EQ_INT(o.next, ST_ERROR);
+    o = sm_step(ST_SENDING, EV_USB_UNMOUNT, ready());
+    CHECK_EQ_INT(o.next, ST_ERROR);
+    CHECK(o.actions & ACT_TYPE_ABORT);
 
     /* --- total function: no (state, event) pair may crash or wander --- */
     g = all_ready();

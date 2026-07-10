@@ -80,6 +80,16 @@ static const char PAGE_FORM[] =
     "spellcheck=false placeholder='sk-\xe2\x80\xa6 (optional for now)'>"
     "<button type=button class=ghost id=tk>Show</button></div>"
 
+    /* What the on-screen Send button strikes. The value is the send_key_t index,
+     * so these options must stay in the enum's order. */
+    "<label for=sendkey>Send button types</label>"
+    "<select id=sendkey name=sendkey>"
+    "<option value=0>Enter</option>"
+    "<option value=1>Cmd / Win + Enter</option>"
+    "<option value=2>Ctrl + Enter</option>"
+    "<option value=3>Shift + Enter</option>"
+    "</select>"
+
     "<button type=submit>Save and restart</button></form>"
     "<form method=POST action=/erase>"
     "<button type=submit class=danger>Erase stored credentials</button></form>"
@@ -291,8 +301,21 @@ static esp_err_t post_save(httpd_req_t *req)
     const int npass = form_get(body, len, "pass", cfg.wifi_pass, sizeof(cfg.wifi_pass));
     const int nkey  = form_get(body, len, "key", cfg.api_key, sizeof(cfg.api_key));
 
+    /* One digit of send_key_t. A missing or bogus value falls back to Enter,
+     * which is what cfg was zeroed to -- a bad dropdown must not block saving
+     * Wi-Fi credentials. */
+    char skbuf[8] = {0};
+    const int nsk = form_get(body, len, "sendkey", skbuf, sizeof(skbuf));
+
     /* Wipe the body: it held both passwords in plaintext. */
     memset(body, 0, sizeof(body));
+
+    if (nsk > 0) {
+        const int v = atoi(skbuf);
+        if (v >= 0 && v < SEND_KEY_COUNT) {
+            cfg.send_key = (send_key_t)v;
+        }
+    }
 
     if (nssid <= 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Wi-Fi network is required");

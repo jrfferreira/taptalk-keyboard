@@ -71,6 +71,15 @@ sm_out_t sm_step(app_state_t state, app_event_t event, const sm_guards_t *g)
             return ready_to_record(g) ? out(ST_RECORDING, ACT_REC_START)
                                       : out(ST_IDLE_READY, ACT_HINT_NOT_READY);
         }
+        /* Send and Undo act on the dictation that was just typed. Both need a
+         * host still listening and something pending; with neither, the buttons
+         * are dimmed on screen, and a stray event here is simply ignored. */
+        if (event == EV_SEND) {
+            return (g->has_pending && g->usb_mounted) ? out(ST_SENDING, ACT_SEND_KEY) : ignore;
+        }
+        if (event == EV_UNDO) {
+            return (g->has_pending && g->usb_mounted) ? out(ST_SENDING, ACT_UNDO) : ignore;
+        }
         if (event == EV_ENTER_SETUP) return out(ST_PROVISIONING, ACT_PROV_START);
         if (event == EV_WIFI_DOWN || event == EV_USB_UNMOUNT) {
             return out(ST_NOT_READY, ACT_NONE);
@@ -123,6 +132,16 @@ sm_out_t sm_step(app_state_t state, app_event_t event, const sm_guards_t *g)
         if (event == EV_USB_UNMOUNT) return out(ST_ERROR, ACT_TYPE_ABORT | ACT_SHOW_ERROR);
         return ignore;
 
+    case ST_SENDING:
+        /* Send (one chord) and Undo (a run of backspaces) both go out on the
+         * typing task and report back with the same TYPE_DONE / TYPE_ABORT
+         * events. There is no clip to discard, so a clean finish just returns
+         * to idle. */
+        if (event == EV_TYPE_DONE)  return out(ST_IDLE_READY, ACT_NONE);
+        if (event == EV_TYPE_ABORT) return out(ST_ERROR, ACT_SHOW_ERROR);
+        if (event == EV_USB_UNMOUNT) return out(ST_ERROR, ACT_TYPE_ABORT | ACT_SHOW_ERROR);
+        return ignore;
+
     case ST_ERROR:
         /* Checked before EV_RETRY: a user who opens setup from the error
          * screen wants the portal, not another doomed reconnect. */
@@ -156,6 +175,7 @@ const char *sm_state_name(app_state_t state)
     case ST_RECORDING:       return "RECORDING";
     case ST_UPLOADING:       return "UPLOADING";
     case ST_TYPING:          return "TYPING";
+    case ST_SENDING:         return "SENDING";
     case ST_NOT_READY:       return "NOT_READY";
     case ST_ERROR:           return "ERROR";
     case ST_COUNT:
@@ -176,6 +196,8 @@ const char *sm_event_name(app_event_t event)
     case EV_BTN_PRESS:   return "BTN_PRESS";
     case EV_BTN_RELEASE: return "BTN_RELEASE";
     case EV_PRESS_LOST:  return "PRESS_LOST";
+    case EV_SEND:        return "SEND";
+    case EV_UNDO:        return "UNDO";
     case EV_REC_MAX:     return "REC_MAX";
     case EV_STT_OK:      return "STT_OK";
     case EV_STT_EMPTY:   return "STT_EMPTY";

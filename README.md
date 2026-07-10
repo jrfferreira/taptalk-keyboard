@@ -54,7 +54,8 @@ it raises its own Wi-Fi network and shows a QR code.
 2. A setup page opens by itself. Enter your Wi-Fi and paste an OpenAI API key.
 3. The device saves both and restarts.
 
-Tap the **cog** on the main screen to change them later, or to erase them.
+Tap the **Wi-Fi icon** (top-right of the main screen) to reopen this page later,
+to change your details, or to erase them.
 
 > [!WARNING]
 > The API key is stored **unencrypted**. Sixty seconds with the board and a USB

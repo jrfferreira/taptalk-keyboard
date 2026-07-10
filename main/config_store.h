@@ -19,10 +19,23 @@
 #define CONFIG_PASS_CAP    65
 #define CONFIG_API_KEY_CAP 256
 
+/* What the Send button strikes. Enter is the safe default; the modified forms
+ * are what chat apps (Slack, Discord, iMessage on macOS) bind to "send" so a
+ * bare Enter inserts a newline instead. Chosen on the setup portal and stored
+ * as a small integer, so adding a form must only ever append here. */
+typedef enum {
+    SEND_KEY_ENTER = 0,
+    SEND_KEY_CMD_ENTER,   /* GUI (Cmd/Win) + Enter */
+    SEND_KEY_CTRL_ENTER,  /* Ctrl + Enter */
+    SEND_KEY_SHIFT_ENTER, /* Shift + Enter */
+    SEND_KEY_COUNT,
+} send_key_t;
+
 typedef struct {
     char wifi_ssid[CONFIG_SSID_CAP];
     char wifi_pass[CONFIG_PASS_CAP];
     char api_key[CONFIG_API_KEY_CAP];
+    send_key_t send_key;
 } app_config_t;
 
 /* Reads NVS into *cfg. Missing keys yield empty strings, not an error.
