@@ -97,7 +97,14 @@ static void set_grad(lv_obj_t *o, uint32_t top, uint32_t bot)
     lv_obj_set_style_bg_opa(o, LV_OPA_COVER, LV_PART_MAIN);
 }
 
-/* Runs in the LVGL task, which already holds the LVGL lock. */
+/* Runs in the LVGL task, which already holds the LVGL lock.
+ *
+ * Every LVGL setter invalidates the widget it touches, whether or not the
+ * value changed. Rewriting the button's gradient on each tick invalidated a
+ * 216 px circle plus its shadow seventeen times a second, which is how the
+ * render task ended up starving the idle task. So: touch nothing that has not
+ * changed. The waveform is the exception -- it genuinely changes every tick,
+ * which is what makes it a waveform. */
 static void ui_tick(lv_timer_t *timer)
 {
     (void)timer;
@@ -111,17 +118,32 @@ static void ui_tick(lv_timer_t *timer)
         return; /* the setup screen is static */
     }
 
-    const bool rec = (m.state == ST_RECORDING);
+    static int last_rec = -1; /* neither true nor false, so the first tick paints */
+    static int last_wifi = -1, last_usb = -1;
+    static uint32_t last_timer_tenths = UINT32_MAX;
+    static char last_msg[sizeof(m.msg)] = {1};
 
-    set_grad(s_btn, rec ? C_REC_TOP : C_IDLE_TOP, rec ? C_REC_BOT : C_IDLE_BOT);
-    lv_obj_set_style_shadow_color(s_btn, lv_color_hex(rec ? C_REC_TOP : C_IDLE_TOP), LV_PART_MAIN);
+    const bool rec = (m.state == ST_RECORDING);
+    if ((int)rec != last_rec) {
+        last_rec = rec;
+        set_grad(s_btn, rec ? C_REC_TOP : C_IDLE_TOP, rec ? C_REC_BOT : C_IDLE_BOT);
+        lv_obj_set_style_shadow_color(s_btn, lv_color_hex(rec ? C_REC_TOP : C_IDLE_TOP),
+                                      LV_PART_MAIN);
+        if (rec) {
+            lv_obj_remove_flag(s_timer, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_timer, LV_OBJ_FLAG_HIDDEN);
+            last_timer_tenths = UINT32_MAX;
+        }
+    }
 
     if (rec) {
-        lv_label_set_text_fmt(s_timer, "%u.%u", (unsigned)(m.clip_ms / 1000),
-                              (unsigned)((m.clip_ms % 1000) / 100));
-        lv_obj_remove_flag(s_timer, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(s_timer, LV_OBJ_FLAG_HIDDEN);
+        const uint32_t tenths = m.clip_ms / 100;
+        if (tenths != last_timer_tenths) {
+            last_timer_tenths = tenths;
+            lv_label_set_text_fmt(s_timer, "%u.%u", (unsigned)(tenths / 10),
+                                  (unsigned)(tenths % 10));
+        }
     }
 
     /* Scroll the history one step and append the newest level. */
@@ -130,19 +152,31 @@ static void ui_tick(lv_timer_t *timer)
 
     for (int i = 0; i < WAVE_BARS; i++) {
         const int h = WAVE_MIN + (s_hist[i] * (WAVE_H - WAVE_MIN)) / 100;
-        lv_obj_set_height(s_wave[i], h);
-        /* Quieter bars fade rather than vanish, so the line always reads. */
-        lv_obj_set_style_bg_opa(s_wave[i], (lv_opa_t)(70 + (s_hist[i] * 185) / 100), LV_PART_MAIN);
+        if (lv_obj_get_height(s_wave[i]) != h) {
+            lv_obj_set_height(s_wave[i], h);
+            /* Quieter bars fade rather than vanish, so the line always reads. */
+            lv_obj_set_style_bg_opa(s_wave[i], (lv_opa_t)(70 + (s_hist[i] * 185) / 100),
+                                    LV_PART_MAIN);
+        }
     }
 
-    lv_obj_set_style_text_color(s_ico_wifi, lv_color_hex(m.wifi ? C_ON : C_OFF), LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_ico_usb, lv_color_hex(m.usb ? C_ON : C_OFF), LV_PART_MAIN);
+    if ((int)m.wifi != last_wifi) {
+        last_wifi = m.wifi;
+        lv_obj_set_style_text_color(s_ico_wifi, lv_color_hex(m.wifi ? C_ON : C_OFF), LV_PART_MAIN);
+    }
+    if ((int)m.usb != last_usb) {
+        last_usb = m.usb;
+        lv_obj_set_style_text_color(s_ico_usb, lv_color_hex(m.usb ? C_ON : C_OFF), LV_PART_MAIN);
+    }
 
-    if (m.msg[0] != '\0') {
-        lv_label_set_text(s_msg, m.msg);
-        lv_obj_remove_flag(s_msg, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(s_msg, LV_OBJ_FLAG_HIDDEN);
+    if (strcmp(m.msg, last_msg) != 0) {
+        snprintf(last_msg, sizeof(last_msg), "%s", m.msg);
+        if (m.msg[0] != '\0') {
+            lv_label_set_text(s_msg, m.msg);
+            lv_obj_remove_flag(s_msg, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_msg, LV_OBJ_FLAG_HIDDEN);
+        }
     }
 }
 
@@ -217,9 +251,12 @@ static void build_main(void)
     lv_obj_align(s_btn, LV_ALIGN_CENTER, 0, -46);
     lv_obj_set_style_radius(s_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(s_btn, 40, LV_PART_MAIN);
-    lv_obj_set_style_shadow_spread(s_btn, 2, LV_PART_MAIN);
-    lv_obj_set_style_shadow_opa(s_btn, LV_OPA_30, LV_PART_MAIN);
+    /* A soft glow, not a drop shadow. LVGL blurs box shadows in software and
+     * the cost grows with the blur radius; 40 px around a 216 px circle is
+     * millions of operations per repaint. */
+    lv_obj_set_style_shadow_width(s_btn, 20, LV_PART_MAIN);
+    lv_obj_set_style_shadow_spread(s_btn, 0, LV_PART_MAIN);
+    lv_obj_set_style_shadow_opa(s_btn, LV_OPA_20, LV_PART_MAIN);
     set_grad(s_btn, C_IDLE_TOP, C_IDLE_BOT);
     lv_obj_add_event_cb(s_btn, on_press, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(s_btn, on_release, LV_EVENT_RELEASED, NULL);
@@ -238,7 +275,7 @@ static void build_main(void)
     lv_obj_t *wave = lv_obj_create(s_main);
     lv_obj_remove_style_all(wave);
     lv_obj_set_size(wave, WAVE_BARS * (WAVE_BAR_W + WAVE_BAR_GAP), WAVE_H);
-    lv_obj_align(wave, LV_ALIGN_CENTER, 0, 116);
+    lv_obj_align(wave, LV_ALIGN_CENTER, 0, 126);
     lv_obj_remove_flag(wave, LV_OBJ_FLAG_SCROLLABLE);
 
     for (int i = 0; i < WAVE_BARS; i++) {
@@ -264,7 +301,9 @@ static void build_main(void)
 
 void ui_show_setup(const prov_info_t *info)
 {
-    if (!bsp_display_lock(1000)) {
+    /* A cold first paint can hold the LVGL lock for a while. Giving up here
+     * leaves the user staring at a half-drawn main screen with no way in. */
+    if (!bsp_display_lock(10000)) {
         ESP_LOGE(TAG, "could not lock display for setup screen");
         return;
     }
