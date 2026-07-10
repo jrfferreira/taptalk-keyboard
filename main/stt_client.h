@@ -13,7 +13,15 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "audio_capture.h"
 #include "config_store.h"
+
+/* Transcript buffer size, NUL included. Sized for the longest clip the
+ * recorder can produce: fast English is ~3 words/s at ~7 bytes/word, so
+ * AUDIO_MAX_SECONDS of speech is ~2.5 KB of text; 32 B/s leaves headroom for
+ * wordier languages and multibyte UTF-8. hid_kbd sizes its copy buffer from
+ * this, so the two can never disagree. */
+#define STT_TRANSCRIPT_CAP (AUDIO_MAX_SECONDS * 32)
 
 /* Uploads `wav` on a background task and posts EV_STT_OK, EV_STT_EMPTY (the
  * clip was silence) or EV_STT_FAIL. HTTPS requires a synced clock; HTTP is

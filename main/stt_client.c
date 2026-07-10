@@ -8,6 +8,7 @@
 #include "core/textnorm.h"
 #include "esp_check.h"
 #include "esp_crt_bundle.h"
+#include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_random.h"
@@ -20,9 +21,12 @@ static const char *TAG = "stt";
  * The esp_http_client default of 5 s would time out on nearly every request. */
 #define STT_TIMEOUT_MS 60000
 #define CHUNK 4096
-#define TRANSCRIPT_CAP 1024
 
-static char s_transcript[TRANSCRIPT_CAP];
+/* One PSRAM block, STT_TRANSCRIPT_CAP bytes each: at ~4 KB apiece they no
+ * longer fit this task's stack, and internal RAM is too tight for buffers
+ * that sit idle between requests (sdkconfig.defaults has the history). */
+static char *s_raw;        /* the response body as received */
+static char *s_transcript; /* the body after textnorm_clean() */
 static char s_error[64];
 static volatile bool s_abort;
 
@@ -33,7 +37,7 @@ static const char *s_language;
 static const uint8_t *s_wav;
 static size_t s_wav_len;
 
-const char *stt_transcript(void) { return s_transcript; }
+const char *stt_transcript(void) { return s_transcript ? s_transcript : ""; }
 const char *stt_error(void) { return s_error; }
 void stt_abort(void) { s_abort = true; }
 
@@ -150,16 +154,25 @@ static void stt_task(void *arg)
     }
 
     /* response_format=text, so the body IS the transcript. */
-    char raw[TRANSCRIPT_CAP];
-    const int n = esp_http_client_read_response(c, raw, sizeof(raw) - 1);
+    const int n = esp_http_client_read_response(c, s_raw, STT_TRANSCRIPT_CAP - 1);
     if (n < 0) {
         fail("Truncated response");
         goto done;
     }
-    raw[n] = '\0';
+    s_raw[n] = '\0';
 
-    textnorm_clean(raw, (size_t)n, s_transcript, sizeof(s_transcript));
-    memset(raw, 0, sizeof(raw));
+    /* The cap is sized so a full-length clip cannot fill it (see
+     * stt_client.h); if a body ever does, say so instead of silently typing
+     * half a dictation. */
+    if (n == STT_TRANSCRIPT_CAP - 1) {
+        char probe;
+        if (esp_http_client_read(c, &probe, 1) > 0) {
+            ESP_LOGW(TAG, "transcript exceeds %d bytes; tail dropped", STT_TRANSCRIPT_CAP - 1);
+        }
+    }
+
+    textnorm_clean(s_raw, (size_t)n, s_transcript, STT_TRANSCRIPT_CAP);
+    memset(s_raw, 0, STT_TRANSCRIPT_CAP);
 
     if (s_transcript[0] == '\0') {
         ESP_LOGI(TAG, "no speech");
@@ -184,6 +197,17 @@ esp_err_t stt_start(const app_config_t *config, const uint8_t *wav, size_t wav_l
     if (wav == NULL || wav_len == 0) {
         snprintf(s_error, sizeof(s_error), "Empty recording");
         return ESP_ERR_INVALID_ARG;
+    }
+
+    if (s_transcript == NULL) {
+        char *buf = heap_caps_malloc(2 * STT_TRANSCRIPT_CAP, MALLOC_CAP_SPIRAM);
+        if (buf == NULL) {
+            snprintf(s_error, sizeof(s_error), "Out of memory");
+            return ESP_ERR_NO_MEM;
+        }
+        buf[0]       = '\0';
+        s_transcript = buf;
+        s_raw        = buf + STT_TRANSCRIPT_CAP;
     }
 
     s_abort   = false;
