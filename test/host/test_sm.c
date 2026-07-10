@@ -256,4 +256,19 @@ TEST_MAIN("sm", {
     CHECK_EQ_INT(o.actions, ACT_NONE);
 
     CHECK_EQ_STR(sm_state_name(ST_RECORDING), "RECORDING");
+
+    /* Every event and state must have a name. A log line reading "--10-->"
+     * costs a trip to the header; "--REC_MAX-->" says a duration cap fired
+     * rather than a finger lifting. */
+    for (int e = 0; e < EV_COUNT; e++) {
+        const char *n = sm_event_name((app_event_t)e);
+        CHECK(n != NULL);
+        CHECK(n[0] != '\0');
+        CHECK_EQ_STR(n, n[0] == '?' ? "unnamed event" : n); /* '?' means forgotten */
+    }
+    for (int s = 0; s < ST_COUNT; s++) {
+        const char *n = sm_state_name((app_state_t)s);
+        CHECK(n != NULL);
+        CHECK(n[0] != '?');
+    }
 })

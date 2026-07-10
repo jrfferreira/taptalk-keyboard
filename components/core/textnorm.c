@@ -82,16 +82,25 @@ uint32_t textnorm_deaccent(uint32_t cp)
     }
 }
 
+/* '\n' and '\t' are whitespace HERE, deliberately.
+ *
+ * They used to survive into the output, and the keymap turns them into Enter
+ * and Tab. OpenAI's response_format=text ends every transcript with a newline,
+ * so the device pressed Enter after every dictation -- submitting whatever form
+ * the cursor was sitting in. A silent clip came back as "\n" alone and pressed
+ * Enter by itself.
+ *
+ * A dictation keyboard types words. It does not press Enter. */
 static int is_ws(uint32_t cp)
 {
-    return cp == ' ' || cp == '\r' || cp == 0x00A0;
+    return cp == ' ' || cp == '\r' || cp == '\n' || cp == '\t' || cp == 0x00A0;
 }
 
-/* C0 controls we drop outright. '\n' and '\t' survive; the keymap turns them
- * into Enter and Tab. */
+/* Every C0 control is dropped now that '\n' and '\t' are handled as
+ * whitespace above and never reach here. */
 static int is_droppable_control(uint32_t cp)
 {
-    return cp < 0x20 && cp != '\n' && cp != '\t';
+    return cp < 0x20;
 }
 
 size_t textnorm_clean(const char *in, size_t in_len, char *out, size_t out_cap)
@@ -126,7 +135,7 @@ size_t textnorm_clean(const char *in, size_t in_len, char *out, size_t out_cap)
         }
 
         /* Emitting a newline or tab makes any pending space redundant. */
-        if (pending_space && have_visible && cp != '\n' && cp != '\t') {
+        if (pending_space && have_visible) {
             if (w + 1 >= out_cap) {
                 break;
             }

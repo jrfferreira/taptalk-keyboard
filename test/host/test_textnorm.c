@@ -42,15 +42,18 @@ TEST_MAIN("textnorm", {
     check_clean("hello world", "hello world");
     check_clean("  leading and trailing  ", "leading and trailing");
     check_clean("collapse    the   runs", "collapse the runs");
-    check_clean("\r\ncarriage\r\n", "\ncarriage\n"); /* \r dropped, \n survives */
-    check_clean("tab\tsep", "tab\tsep");
+    /* These two used to assert that '\n' and '\t' survive. They described the
+     * implementation, not the requirement, and that is how the Enter bug lived
+     * in a green suite: the keymap turns '\n' into HID_KEY_ENTER. */
+    check_clean("\r\ncarriage\r\n", "carriage");
+    check_clean("tab\tsep", "tab sep");
     check_clean("bell\x07gone", "bellgone");         /* C0 control dropped */
     check_clean("", "");
     check_clean("   ", "");
     check_clean("\xC3\xA7\xC3\xA3o", "\xC3\xA7\xC3\xA3o"); /* ção passes through intact */
 
-    /* A space pending before a newline is dropped rather than emitted. */
-    check_clean("a \n b", "a\n b");
+    /* A whitespace run of any mixture collapses to exactly one space. */
+    check_clean("a \n b", "a b");
 
     /* Truncation must not split a multi-byte codepoint. */
     char small[4];
@@ -65,4 +68,30 @@ TEST_MAIN("textnorm", {
     CHECK_EQ_INT(textnorm_clean("abc", 3, one, sizeof(one)), 0);
     CHECK_EQ_INT(one[0], '\0');
     CHECK_EQ_INT(textnorm_clean(NULL, 0, one, sizeof(one)), 0);
+
+    /* --- the Enter bug ---
+     *
+     * OpenAI's response_format=text ends every transcript with a newline, and
+     * the keymap turns '\n' into HID_KEY_ENTER. Before this, dictating "hello"
+     * typed `hello` and then pressed Enter, submitting whatever form the cursor
+     * was in; a silent clip came back as "\n" and pressed Enter all by itself.
+     * Observed on hardware: `stt: transcript: "\n"` -> `hid: typed 1 bytes`. */
+    check_clean("hello\n", "hello");
+    check_clean("\n", "");
+    check_clean("\r\n", "");
+    check_clean("\n\n\n", "");
+    check_clean("  \n  ", "");
+    check_clean("\thello\t", "hello");
+    check_clean("\nhello world\n", "hello world");
+
+    /* Internal newlines collapse to a single space rather than pressing Enter
+     * mid-sentence. A dictation keyboard types words. */
+    check_clean("one\ntwo", "one two");
+    check_clean("one\n\n\ntwo", "one two");
+    check_clean("one\t\ntwo", "one two");
+    check_clean("a\nb\nc", "a b c");
+
+    /* And the realistic shape of what the API actually returns. */
+    check_clean("This is a test.\n", "This is a test.");
+    check_clean(" Olá, tudo bem?\n", "Olá, tudo bem?");
 })
