@@ -44,10 +44,6 @@ void app_main(void)
     app_config_t cfg;
     ESP_ERROR_CHECK(config_load(&cfg));
 
-    char masked[24];
-    config_mask_key(cfg.api_key, masked, sizeof(masked));
-    ui_set_api_key(masked);
-
     app_sm_start(&cfg);
 
     /* pmic_init() is the state machine's first action, so ALDO1 is up before

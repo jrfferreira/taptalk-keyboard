@@ -15,7 +15,8 @@
 static const char *TAG = "sm";
 
 #define EVENT_QUEUE_DEPTH 16
-#define ERROR_AUTO_CLEAR_MS 4000
+#define TICK_MS 500
+#define ERROR_AUTO_CLEAR_TICKS (4000 / TICK_MS)
 
 static QueueHandle_t s_queue;
 static app_state_t s_state = ST_BOOT; /* written only by the sm task */
@@ -24,7 +25,7 @@ static app_config_t s_cfg;
 /* Latched from the events themselves, so a guard reflects exactly what the
  * state machine has been told rather than whatever a driver happens to report
  * at the moment it is asked. Written only by the sm task. */
-static bool s_wifi_up, s_time_ok;
+static bool s_wifi_up, s_time_ok, s_usb;
 
 app_state_t app_sm_state(void) { return s_state; }
 
@@ -47,11 +48,10 @@ static sm_guards_t current_guards(void)
         .provisioned = config_is_provisioned(&s_cfg),
         .wifi_up     = s_wifi_up,
         .time_ok     = s_time_ok,
-        /* Chunk 1 ships no USB HID (installing TinyUSB would take over the
-         * USB PHY and kill the serial console we need for bring-up), so the
-         * mount precondition is vacuously satisfied. hid_kbd.c replaces this
-         * with tud_mounted() in chunk 2. */
-        .usb_mounted  = true,
+        /* Chunk 1 ships no USB HID, so there is no tud_mounted() to ask. VBUS
+         * presence from the PMU is the honest stand-in: no cable, no host to
+         * type into. hid_kbd.c replaces this in chunk 2. */
+        .usb_mounted  = s_usb,
         .clip_usable  = audio_clip_usable(),
         .wifi_retries = net_wifi_retries(),
     };
@@ -63,11 +63,13 @@ static void run_actions(uint32_t actions)
     if (actions & ACT_PMIC_INIT) {
         pmic_status_t st;
         const esp_err_t err = pmic_init(&st);
-        ui_set_pmic(&st);
         if (err == ESP_OK) {
             if (!st.aldo1_on) {
                 ESP_LOGE(TAG, "ALDO1 still off after enable; the microphone will be silent");
             }
+            /* Seed the cable state before anything can consult the guard. */
+            s_usb = pmic_vbus_present();
+            ui_set_usb(s_usb);
             app_sm_post(EV_PMIC_OK);
         } else {
             ui_set_msg("PMIC not found");
@@ -113,7 +115,9 @@ static void run_actions(uint32_t actions)
         audio_clip_discard();
     }
     if (actions & ACT_HINT_NOT_READY) {
-        ui_set_msg(!s_wifi_up ? "Wi-Fi not connected" : "Clock not synced");
+        ui_set_msg(!s_usb      ? "No USB cable"
+                   : !s_wifi_up ? "Wi-Fi not connected"
+                                : "Clock not synced");
     }
     if (actions & ACT_SHOW_ERROR) {
         ui_set_msg(config_is_provisioned(&s_cfg) ? "Error - tap Setup or wait"
@@ -136,17 +140,31 @@ static void sm_task(void *arg)
     /* Kick the machine out of ST_BOOT. */
     app_sm_post(EV_NONE);
 
+    int error_ticks = 0;
+
     for (;;) {
         app_event_t ev;
-        if (xQueueReceive(s_queue, &ev, pdMS_TO_TICKS(ERROR_AUTO_CLEAR_MS)) != pdTRUE) {
-            /* Idle tick. An error state clears itself so the device does not
-             * strand the user on a dead screen — unless it is unprovisioned,
-             * in which case sm_step() keeps it there on purpose. */
-            if (s_state == ST_ERROR) {
+        if (xQueueReceive(s_queue, &ev, pdMS_TO_TICKS(TICK_MS)) != pdTRUE) {
+            /* Idle tick. Poll the cable: no VBUS means no host to type into,
+             * so recording is pointless and the USB icon must say so. */
+            const bool usb_now = pmic_vbus_present();
+            if (usb_now != s_usb) {
+                ui_set_usb(usb_now);
+                app_sm_post(usb_now ? EV_USB_MOUNT : EV_USB_UNMOUNT);
+            }
+
+            /* An error state clears itself so the device does not strand the
+             * user on a dead screen — unless it is unprovisioned, in which
+             * case sm_step() keeps it there on purpose. */
+            if (s_state == ST_ERROR && ++error_ticks >= ERROR_AUTO_CLEAR_TICKS) {
+                error_ticks = 0;
                 ev = EV_TIMEOUT;
             } else {
                 continue;
             }
+        }
+        if (s_state != ST_ERROR) {
+            error_ticks = 0;
         }
 
         /* Latch the preconditions before consulting the guards. */
@@ -158,6 +176,8 @@ static void sm_task(void *arg)
         }
         if (ev == EV_TIME_OK) s_time_ok = true;
         if (ev == EV_TIME_FAIL) s_time_ok = false;
+        if (ev == EV_USB_MOUNT) s_usb = true;
+        if (ev == EV_USB_UNMOUNT) s_usb = false;
 
         const sm_guards_t g = current_guards();
         const sm_out_t out  = sm_step(s_state, ev, &g);

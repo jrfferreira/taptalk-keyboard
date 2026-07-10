@@ -15,7 +15,15 @@ CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_USE_MALLOC=y
-CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+# REQUIRED, not cosmetic. The BSP puts LVGL's draw buffer in PSRAM
+# (buff_spiram = true) and the SH8601 driver DMAs straight out of it. The
+# default is a 32-byte data cache line, and with Octal PSRAM the SPI master
+# then rejects the buffer: every flush fails with
+#   E lcd_panel.io.spi: panel_io_spi_tx_color(395): spi transmit (queue) color failed
+# and the panel shows a torn, half-painted frame. All three of Waveshare's
+# display examples set this; omitting it cost a bring-up cycle.
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_FREERTOS_HZ=1000

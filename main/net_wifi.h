@@ -15,6 +15,10 @@
  * radio mode between them. */
 esp_err_t net_init_common(void);
 
+/* Creates the station netif once. Provisioning needs it to scan; connecting
+ * needs it to associate. Idempotent. */
+void net_wifi_ensure_sta_netif(void);
+
 /* Associates using stored credentials. Posts EV_WIFI_UP on success; a
  * disconnect posts EV_WIFI_DOWN and the state machine owns the retry policy. */
 esp_err_t net_wifi_sta_connect(const app_config_t *cfg);

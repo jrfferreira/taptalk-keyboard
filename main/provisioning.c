@@ -1,11 +1,13 @@
 #include "provisioning.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "app_sm.h"
 #include "config_store.h"
 #include "core/dnsreply.h"
 #include "core/formdec.h"
+#include "core/jsonesc.h"
 #include "esp_check.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -13,6 +15,7 @@
 #include "esp_random.h"
 #include <stdbool.h>
 #include "esp_wifi.h"
+#include "net_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lwip/sockets.h"
@@ -30,35 +33,81 @@ static httpd_handle_t s_httpd;
 
 /* ------------------------------------------------------------------ page */
 
+/* The SSID stays a real <input>, not a <select>: password managers look for a
+ * text field marked autocomplete="username" next to a password field, and a
+ * <select> breaks that detection. The picker writes into it instead. */
 static const char PAGE_FORM[] =
     "<!doctype html><meta charset=utf-8>"
     "<meta name=viewport content='width=device-width,initial-scale=1'>"
     "<title>TapTalk setup</title>"
     "<style>"
-    "body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:24px;background:#101418;color:#e8e8e8}"
-    "h1{font-size:20px;margin:0 0 4px}p{color:#9aa0a6;margin:0 0 20px;font-size:14px}"
-    "label{display:block;margin:16px 0 4px;font-size:13px;color:#bdc1c6}"
-    "input{width:100%;box-sizing:border-box;padding:12px;font-size:16px;border-radius:8px;"
-    "border:1px solid #3c4043;background:#1c2126;color:#e8e8e8}"
-    "button{width:100%;margin-top:24px;padding:14px;font-size:16px;font-weight:600;border:0;"
-    "border-radius:8px;background:#2e7d32;color:#fff}"
-    "small{display:block;margin-top:16px;color:#9aa0a6;font-size:12px}"
-    ".danger{background:none;border:1px solid #5f6368;color:#9aa0a6;margin-top:12px;font-weight:400}"
+    "body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:24px;background:#0a0d10;color:#e8edf2}"
+    "h1{font-size:21px;margin:0 0 4px}p{color:#8a97a3;margin:0 0 20px;font-size:14px}"
+    "label{display:block;margin:18px 0 5px;font-size:13px;color:#bdc1c6}"
+    "input,select{width:100%;box-sizing:border-box;padding:12px;font-size:16px;border-radius:9px;"
+    "border:1px solid #2b343d;background:#141a21;color:#e8edf2}"
+    "input:focus,select:focus{outline:2px solid #3ddc97;outline-offset:1px;border-color:#3ddc97}"
+    "button{width:100%;margin-top:26px;padding:14px;font-size:16px;font-weight:600;border:0;"
+    "border-radius:9px;background:#2e7d32;color:#fff}"
+    ".row{display:flex;gap:8px}.row input{flex:1}"
+    ".ghost{width:auto;margin:0;padding:12px 14px;background:#1b232b;color:#8a97a3;font-weight:400}"
+    "small{display:block;margin-top:18px;color:#8a97a3;font-size:12px}"
+    ".danger{background:none;border:1px solid #4b555f;color:#8a97a3;margin-top:12px;font-weight:400}"
+    "#hint{font-size:12px;color:#6b7885;margin:6px 0 0}"
     "</style>"
     "<h1>TapTalk setup</h1><p>Credentials are stored on the device.</p>"
-    "<form method=POST action=/save>"
-    "<label for=ssid>Wi-Fi network</label>"
-    "<input id=ssid name=ssid autocapitalize=off autocorrect=off required>"
+    /* autocomplete=on plus a username/current-password pair is what makes a
+     * password manager offer to fill and to save. */
+    "<form method=POST action=/save autocomplete=on>"
+
+    "<label for=netsel>Wi-Fi network</label>"
+    "<select id=netsel><option value=''>Scanning\xe2\x80\xa6</option></select>"
+
+    "<label for=ssid>Network name</label>"
+    "<input id=ssid name=ssid autocomplete=username autocapitalize=off autocorrect=off "
+    "spellcheck=false required>"
+    "<p id=hint></p>"
+
     "<label for=pass>Wi-Fi password</label>"
-    "<input id=pass name=pass type=password autocapitalize=off autocorrect=off>"
+    "<div class=row>"
+    "<input id=pass name=pass type=password autocomplete=current-password autocapitalize=off "
+    "autocorrect=off spellcheck=false>"
+    "<button type=button class=ghost id=tp>Show</button></div>"
+
     "<label for=key>OpenAI API key</label>"
-    "<input id=key name=key type=password autocapitalize=off autocorrect=off "
-    "placeholder='sk-... (optional for now)'>"
+    "<div class=row>"
+    "<input id=key name=key type=password autocomplete=off autocapitalize=off autocorrect=off "
+    "spellcheck=false placeholder='sk-\xe2\x80\xa6 (optional for now)'>"
+    "<button type=button class=ghost id=tk>Show</button></div>"
+
     "<button type=submit>Save and restart</button></form>"
     "<form method=POST action=/erase>"
     "<button type=submit class=danger>Erase stored credentials</button></form>"
     "<small>The API key is stored unencrypted. Anyone with this board and a USB "
-    "cable can read it. Erase it before lending the device.</small>";
+    "cable can read it. Erase it before lending the device.</small>"
+
+    "<script>"
+    "var sel=document.getElementById('netsel'),ssid=document.getElementById('ssid'),"
+    "hint=document.getElementById('hint');"
+    "function toggle(b,i){b.onclick=function(){var p=i.type==='password';"
+    "i.type=p?'text':'password';b.textContent=p?'Hide':'Show';};}"
+    "toggle(document.getElementById('tp'),document.getElementById('pass'));"
+    "toggle(document.getElementById('tk'),document.getElementById('key'));"
+    "sel.onchange=function(){if(sel.value){ssid.value=sel.value;"
+    "document.getElementById('pass').focus();}};"
+    "fetch('/scan').then(function(r){return r.json();}).then(function(n){"
+    "sel.innerHTML='';"
+    "var o=document.createElement('option');o.value='';"
+    /* textContent, never innerHTML: an SSID is 32 bytes of anything. */
+    "o.textContent=n.length?'Choose a network\\u2026':'No networks found';"
+    "sel.appendChild(o);"
+    "n.forEach(function(a){var e=document.createElement('option');"
+    "e.value=a.s;e.textContent=a.s+(a.p?' \\ud83d\\udd12':'');sel.appendChild(e);});"
+    "hint.textContent=n.length?'Not listed? Type it above.':"
+    "'Scan found nothing. Type the name above.';"
+    "}).catch(function(){sel.innerHTML='<option>Scan unavailable</option>';"
+    "hint.textContent='Type the network name above.';});"
+    "</script>";
 
 static const char PAGE_SAVED[] =
     "<!doctype html><meta charset=utf-8>"
@@ -68,6 +117,79 @@ static const char PAGE_SAVED[] =
     "color:#e8e8e8}</style>"
     "<h1>Saved</h1><p>The device is restarting and will join your network. "
     "This access point is going away.</p>";
+
+/* ------------------------------------------------------------------ scan */
+
+#define MAX_APS 20
+#define SCAN_RECORDS 40
+
+typedef struct {
+    char ssid[33];
+    bool secure;
+    int8_t rssi;
+} ap_entry_t;
+
+static ap_entry_t s_aps[MAX_APS];
+static size_t s_ap_count;
+
+/* Scanned ONCE, before the access point is serving anyone. A scan makes the
+ * radio hop channels, which would drop the very phone that asked for it, so
+ * there is no rescan button: if a network is missing, the user types it. */
+static void scan_networks(void)
+{
+    const wifi_scan_config_t cfg = {.show_hidden = false};
+    if (esp_wifi_scan_start(&cfg, true) != ESP_OK) {
+        ESP_LOGW(TAG, "scan failed; the user can still type a network name");
+        return;
+    }
+
+    uint16_t n = SCAN_RECORDS;
+    wifi_ap_record_t *recs = calloc(SCAN_RECORDS, sizeof(wifi_ap_record_t));
+    if (recs == NULL || esp_wifi_scan_get_ap_records(&n, recs) != ESP_OK) {
+        free(recs);
+        return;
+    }
+
+    for (uint16_t i = 0; i < n && s_ap_count < MAX_APS; i++) {
+        const char *ssid = (const char *)recs[i].ssid;
+        if (ssid[0] == '\0') {
+            continue; /* hidden */
+        }
+        /* The air is full of duplicates: mesh nodes, repeaters, both bands.
+         * Keep the strongest sighting of each name. */
+        bool dup = false;
+        for (size_t j = 0; j < s_ap_count; j++) {
+            if (strcmp(s_aps[j].ssid, ssid) == 0) {
+                if (recs[i].rssi > s_aps[j].rssi) {
+                    s_aps[j].rssi = recs[i].rssi;
+                }
+                dup = true;
+                break;
+            }
+        }
+        if (dup) {
+            continue;
+        }
+        snprintf(s_aps[s_ap_count].ssid, sizeof(s_aps[s_ap_count].ssid), "%s", ssid);
+        s_aps[s_ap_count].rssi   = recs[i].rssi;
+        s_aps[s_ap_count].secure = recs[i].authmode != WIFI_AUTH_OPEN;
+        s_ap_count++;
+    }
+    free(recs);
+
+    /* Strongest first: the network you are standing next to should be at top. */
+    for (size_t i = 1; i < s_ap_count; i++) {
+        const ap_entry_t k = s_aps[i];
+        size_t j = i;
+        while (j > 0 && s_aps[j - 1].rssi < k.rssi) {
+            s_aps[j] = s_aps[j - 1];
+            j--;
+        }
+        s_aps[j] = k;
+    }
+
+    ESP_LOGI(TAG, "scan found %u networks", (unsigned)s_ap_count);
+}
 
 /* ------------------------------------------------------------------ http */
 
@@ -86,6 +208,29 @@ static esp_err_t send_html(httpd_req_t *req, const char *html, size_t len)
 static esp_err_t get_any(httpd_req_t *req)
 {
     return send_html(req, PAGE_FORM, sizeof(PAGE_FORM) - 1);
+}
+
+/* [{"s":"name","p":1},...] — `p` is protected, i.e. show a padlock.
+ * Each SSID goes through json_escape(): those 32 bytes came off the air. */
+static esp_err_t get_scan(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+
+    httpd_resp_sendstr_chunk(req, "[");
+    for (size_t i = 0; i < s_ap_count; i++) {
+        char esc[sizeof(s_aps[i].ssid) * 2 + 1];
+        if (json_escape(s_aps[i].ssid, strlen(s_aps[i].ssid), esc, sizeof(esc)) < 0) {
+            continue; /* unrepresentable; drop it rather than emit broken JSON */
+        }
+        char item[sizeof(esc) + 32];
+        snprintf(item, sizeof(item), "%s{\"s\":\"%s\",\"p\":%d}", i ? "," : "", esc,
+                 s_aps[i].secure ? 1 : 0);
+        httpd_resp_sendstr_chunk(req, item);
+    }
+    httpd_resp_sendstr_chunk(req, "]");
+    httpd_resp_sendstr_chunk(req, NULL);
+    return ESP_OK;
 }
 
 static esp_err_t read_body(httpd_req_t *req, char *buf, size_t cap, size_t *out_len)
@@ -169,7 +314,7 @@ static esp_err_t post_erase(httpd_req_t *req)
 static esp_err_t start_http_server(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 4;
+    cfg.max_uri_handlers = 5;
     cfg.lru_purge_enable = true;
     cfg.uri_match_fn     = httpd_uri_match_wildcard;
     /* The AP is ours alone; a short timeout keeps a stalled phone from
@@ -181,9 +326,13 @@ static esp_err_t start_http_server(void)
 
     const httpd_uri_t save  = {.uri = "/save", .method = HTTP_POST, .handler = post_save};
     const httpd_uri_t erase = {.uri = "/erase", .method = HTTP_POST, .handler = post_erase};
+    const httpd_uri_t scan  = {.uri = "/scan", .method = HTTP_GET, .handler = get_scan};
     const httpd_uri_t any   = {.uri = "/*", .method = HTTP_GET, .handler = get_any};
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(s_httpd, &save), TAG, "uri save");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(s_httpd, &erase), TAG, "uri erase");
+    /* Registered before the wildcard handler: matching runs in registration
+     * order, and the catch-all would happily swallow "/scan". */
+    ESP_RETURN_ON_ERROR(httpd_register_uri_handler(s_httpd, &scan), TAG, "uri scan");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(s_httpd, &any), TAG, "uri any");
     return ESP_OK;
 }
@@ -272,6 +421,7 @@ esp_err_t provisioning_start(prov_info_t *info)
     esp_wifi_stop();
 
     esp_netif_create_default_wifi_ap();
+    net_wifi_ensure_sta_netif();
 
     wifi_config_t wc = {0};
     /* wc.ap.ssid is 32 bytes with no room for a terminator, so copy by length
@@ -289,9 +439,15 @@ esp_err_t provisioning_start(prov_info_t *info)
      * and the API key in the clear over plain HTTP. */
     wc.ap.authmode = WIFI_AUTH_WPA2_PSK;
 
-    ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_AP), TAG, "ap mode");
+    /* APSTA, not AP: scanning needs the station interface. The STA side never
+     * associates -- net_wifi.c gates that on s_want_connect. */
+    ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA), TAG, "apsta mode");
     ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP, &wc), TAG, "ap config");
     ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "wifi start");
+
+    /* Before the HTTP server, so the scan's channel hopping cannot disturb a
+     * phone that has already joined. */
+    scan_networks();
 
     ESP_RETURN_ON_ERROR(start_http_server(), TAG, "http");
     xTaskCreatePinnedToCore(dns_task, "dns", 3072, NULL, 4, NULL, 0);
