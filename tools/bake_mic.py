@@ -24,35 +24,38 @@ def draw_mic():
     img = Image.new("L", (w, h), 0)
     d = ImageDraw.Draw(img)
 
-    cx = w / 2
-    s = SS  # shorthand for scaling constants below
+    # Geometry mirrors the reference glyph in web/index.html: capsule 30x56
+    # (r15) on y in [-44, 12], cradle = the bottom half of a radius-30 circle
+    # centred at (0, -8) with a 6-unit round-capped stroke, stem 7x16, base
+    # 34x6. Everything below is in those glyph units: one unit is K pixels,
+    # and the glyph's 66x84 bounding box is centred on the canvas.
+    K = 4 / 3 * SS
+    ox, oy = w / 2, h / 2 + 2 * K  # bbox spans y in [-44, 40], so centre is -2
+
+    def X(u):
+        return ox + u * K
+
+    def Y(v):
+        return oy + v * K
 
     # Body: a vertical capsule. rounded_rectangle with radius = half-width gives
     # fully round ends.
-    body_w = 40 * s
-    body_h = 60 * s
-    bx0 = cx - body_w / 2
-    by0 = 8 * s
-    d.rounded_rectangle([bx0, by0, bx0 + body_w, by0 + body_h],
-                        radius=body_w / 2, fill=255)
+    d.rounded_rectangle([X(-15), Y(-44), X(15), Y(12)], radius=15 * K, fill=255)
 
-    # Cradle: a thick U-arc hugging the lower half of the body. draw.arc strokes
-    # a circle segment; width gives it body. Angles are clockwise from 3 o'clock,
-    # so 20..160 sweeps the bottom.
-    cr = 34 * s
-    cy = 40 * s
-    d.arc([cx - cr, cy - cr, cx + cr, cy + cr],
-          start=20, end=160, fill=255, width=int(7 * s))
+    # Cradle: a full 180-degree U-arc. draw.arc strokes inward from the bbox
+    # ellipse, so the bbox sits at the stroke's outer edge (radius 30 + 3).
+    # Angles are clockwise from 3 o'clock, so 0..180 sweeps the bottom. PIL has
+    # no stroke-linecap="round"; filled discs at both stroke ends stand in.
+    d.arc([X(-33), Y(-41), X(33), Y(25)], start=0, end=180,
+          fill=255, width=round(6 * K))
+    for ex in (-30, 30):
+        d.ellipse([X(ex - 3), Y(-11), X(ex + 3), Y(-5)], fill=255)
 
-    # Stem: from the bottom of the cradle down to the base.
-    stem_w = 7 * s
-    d.rounded_rectangle([cx - stem_w / 2, cy + cr - 3 * s, cx + stem_w / 2, 104 * s],
-                        radius=stem_w / 2, fill=255)
+    # Stem: from just inside the cradle's bottom down into the base.
+    d.rounded_rectangle([X(-3.5), Y(20), X(3.5), Y(36)], radius=3 * K, fill=255)
 
     # Base: a short foot bar.
-    base_w = 44 * s
-    d.rounded_rectangle([cx - base_w / 2, 102 * s, cx + base_w / 2, 110 * s],
-                        radius=4 * s, fill=255)
+    d.rounded_rectangle([X(-17), Y(34), X(17), Y(40)], radius=3 * K, fill=255)
 
     return img.resize((W, H), Image.LANCZOS)
 
