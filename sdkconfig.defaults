@@ -16,6 +16,12 @@ CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_USE_MALLOC=y
 
+# LVGL's draw buffer now lives in internal DMA memory (see app_main.c), which
+# costs 29 KB of a scarce pool. Wi-Fi and lwIP buffers pay it back: PSRAM is no
+# longer on the display's critical path, so there is nothing left for them to
+# contend with there.
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
 # REQUIRED, not cosmetic. The BSP puts LVGL's draw buffer in PSRAM
 # (buff_spiram = true) and the SH8601 driver DMAs straight out of it. The
 # default is a 32-byte data cache line, and with Octal PSRAM the SPI master
@@ -56,3 +62,9 @@ CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y
 CONFIG_LV_COLOR_DEPTH_16=y
 CONFIG_LV_FONT_MONTSERRAT_28=y
 CONFIG_LV_USE_QRCODE=y
+
+# The shared I2C bus carries the PMIC, the IO expander, the codec and the touch
+# controller. At 400 kHz the FT3168 NACKs on a cold boot -- the driver even
+# warns about pull-up strength -- and the BSP turns that into an abort(). The
+# bus is not a bottleneck for any of these devices.
+CONFIG_BSP_I2C_FAST_MODE=n
