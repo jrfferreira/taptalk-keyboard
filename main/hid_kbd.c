@@ -15,9 +15,17 @@ static const char *TAG = "hid";
 
 #define TYPE_CAP 1200
 
+/* The typing task does one of three things per wake-up. s_op says which; it is
+ * set before the notify and read once at the top of the loop, so a single
+ * writer at a time is guaranteed by the state machine that drives it. */
+typedef enum { OP_TYPE, OP_SEND, OP_UNDO } hid_op_t;
+
 static char s_text[TYPE_CAP];
 static TaskHandle_t s_task;
 static volatile bool s_abort;
+static volatile hid_op_t s_op;
+static uint8_t s_send_mod, s_send_key; /* the chord OP_SEND strikes */
+static int s_last_typed_units;         /* cursor advances from the last OP_TYPE, for Undo */
 
 /* Written once during boot, before the typing task exists; read-only after. */
 static const keymap_layout_t *s_layout = &keymap_us;
@@ -156,7 +164,7 @@ static bool emit(uint32_t codepoint, size_t *skipped)
 static void type_out(const char *s)
 {
     const size_t len = strlen(s);
-    size_t i = 0, skipped = 0;
+    size_t i = 0, skipped = 0, chars = 0;
 
     while (i < len) {
         if (s_abort || !tud_mounted()) {
@@ -171,6 +179,7 @@ static void type_out(const char *s)
             break;
         }
         i += used;
+        chars++;
 
         if (!emit(cp, &skipped)) {
             app_sm_post(EV_TYPE_ABORT);
@@ -178,17 +187,68 @@ static void type_out(const char *s)
         }
     }
 
+    /* One backspace undoes one grapheme, so Undo counts characters that landed
+     * on screen, not bytes or keystrokes: a skipped codepoint typed nothing,
+     * and a dead-key accent is two strikes but a single character. */
+    size_t units = chars - skipped;
+
 #if CONFIG_TAPTALK_TRAILING_SPACE
     /* Lets you dictate several phrases without them running together. Never
-     * Enter: that would submit whatever form the cursor is sitting in. */
+     * Enter: that would submit whatever form the cursor is sitting in -- Send
+     * is the deliberate way to do that now. The space is part of what was
+     * typed, so Undo must delete it too. */
     (void)emit(' ', &skipped);
+    units++;
 #endif
+
+    s_last_typed_units = (int)units;
 
     if (skipped > 0) {
         ESP_LOGW(TAG, "%u characters could not be typed on the %s layout", (unsigned)skipped,
                  s_layout->name);
     }
-    ESP_LOGI(TAG, "typed %u bytes", (unsigned)len);
+    ESP_LOGI(TAG, "typed %u bytes (%u undoable characters)", (unsigned)len, (unsigned)units);
+    app_sm_post(EV_TYPE_DONE);
+}
+
+/* Send: one chord, held and released. Reports back with the typing events so
+ * the state machine leaves ST_SENDING the same way it leaves ST_TYPING. */
+static void send_chord(uint8_t mod, uint8_t key)
+{
+    const hid_step_t press   = {.mod = mod, .key = key};
+    const hid_step_t release = {.mod = 0, .key = 0};
+    if (s_abort || !send_frame(&press) || !send_frame(&release)) {
+        ESP_LOGW(TAG, "send chord mod=0x%02x key=0x%02x aborted", mod, key);
+        app_sm_post(EV_TYPE_ABORT);
+        return;
+    }
+    ESP_LOGI(TAG, "sent chord mod=0x%02x key=0x%02x", mod, key);
+    app_sm_post(EV_TYPE_DONE);
+}
+
+/* Undo: one Backspace per character the last dictation put on screen. */
+static void undo_backspaces(void)
+{
+    const int n = s_last_typed_units;
+    const hid_step_t press   = {.mod = 0, .key = HID_KEY_BACKSPACE};
+    const hid_step_t release = {.mod = 0, .key = 0};
+
+    for (int k = 0; k < n; k++) {
+        if (s_abort || !tud_mounted()) {
+            ESP_LOGW(TAG, "undo aborted at %d/%d", k, n);
+            app_sm_post(EV_TYPE_ABORT);
+            return;
+        }
+        if (!send_frame(&press) || !send_frame(&release)) {
+            app_sm_post(EV_TYPE_ABORT);
+            return;
+        }
+    }
+
+    /* A dictation can be undone once. Clearing the count keeps a second Undo
+     * from eating into whatever the user typed by hand afterwards. */
+    s_last_typed_units = 0;
+    ESP_LOGI(TAG, "undid %d characters", n);
     app_sm_post(EV_TYPE_DONE);
 }
 
@@ -198,7 +258,12 @@ static void type_task(void *arg)
     for (;;) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         s_abort = false;
-        type_out(s_text);
+        switch (s_op) {
+        case OP_SEND: send_chord(s_send_mod, s_send_key); break;
+        case OP_UNDO: undo_backspaces(); break;
+        case OP_TYPE:
+        default:      type_out(s_text); break;
+        }
     }
 }
 
@@ -246,7 +311,20 @@ static void type_task(void *arg)
     (void)arg;
     for (;;) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        ESP_LOGW(TAG, "HID disabled; would have typed: \"%s\"", s_text);
+        switch (s_op) {
+        case OP_SEND:
+            ESP_LOGW(TAG, "HID disabled; would have sent chord mod=0x%02x key=0x%02x", s_send_mod,
+                     s_send_key);
+            break;
+        case OP_UNDO:
+            ESP_LOGW(TAG, "HID disabled; would have undone %d characters", s_last_typed_units);
+            s_last_typed_units = 0;
+            break;
+        case OP_TYPE:
+        default:
+            ESP_LOGW(TAG, "HID disabled; would have typed: \"%s\"", s_text);
+            break;
+        }
         app_sm_post(EV_TYPE_DONE);
     }
 }
@@ -279,6 +357,31 @@ esp_err_t hid_kbd_type(const char *utf8)
         return ESP_ERR_INVALID_STATE;
     }
     snprintf(s_text, sizeof(s_text), "%s", utf8);
+    s_op    = OP_TYPE;
+    s_abort = false;
+    xTaskNotifyGive(s_task);
+    return ESP_OK;
+}
+
+esp_err_t hid_kbd_send(uint8_t mod, uint8_t key)
+{
+    if (s_task == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_send_mod = mod;
+    s_send_key = key;
+    s_op       = OP_SEND;
+    s_abort    = false;
+    xTaskNotifyGive(s_task);
+    return ESP_OK;
+}
+
+esp_err_t hid_kbd_undo(void)
+{
+    if (s_task == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_op    = OP_UNDO;
     s_abort = false;
     xTaskNotifyGive(s_task);
     return ESP_OK;

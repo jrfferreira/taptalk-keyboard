@@ -8,6 +8,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "esp_err.h"
 
@@ -27,5 +28,16 @@ bool hid_kbd_mounted(void);
 /* Types `utf8` on the typing task and posts EV_TYPE_DONE, or EV_TYPE_ABORT if
  * the host went away mid-string. Safe to call from the state machine task. */
 esp_err_t hid_kbd_type(const char *utf8);
+
+/* Strikes one chord (hold `mod`, tap `key`, release) on the typing task and
+ * reports back with the same EV_TYPE_DONE / EV_TYPE_ABORT events. This is how
+ * Send submits a dictation -- typically Enter, or a modifier + Enter. */
+esp_err_t hid_kbd_send(uint8_t mod, uint8_t key);
+
+/* Backspaces away exactly what the last hid_kbd_type() put on the host: one
+ * Backspace per character that advanced the cursor, including any trailing
+ * space. Reports back with EV_TYPE_DONE / EV_TYPE_ABORT. A no-op (still posts
+ * EV_TYPE_DONE) if nothing has been typed since boot. */
+esp_err_t hid_kbd_undo(void);
 
 void hid_kbd_abort(void);

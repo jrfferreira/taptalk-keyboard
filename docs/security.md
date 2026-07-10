@@ -52,6 +52,12 @@ form. Your Wi-Fi password, endpoint, and API key cross that link.
   click through warnings, which is worse than the thing it prevents. The WPA2
   link is the confidentiality boundary.
 - At most **two clients** may associate.
+- Reopening setup prefills the form from the stored configuration (`GET
+  /config`). It serves **non-secrets only** — SSID, endpoint, model, language —
+  plus two booleans saying whether a password and a key exist. The stored
+  Wi-Fi password and API key are never sent to the browser. Leaving those
+  fields blank keeps the stored values: the password only while the SSID is
+  unchanged, the key until the "Forget the stored API key" box is ticked.
 - The portal is only reachable while the device is in setup mode. It does not
   run during normal operation.
 

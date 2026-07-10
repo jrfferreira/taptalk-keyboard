@@ -26,6 +26,18 @@
 #define CONFIG_DEFAULT_STT_URL   "https://api.openai.com/v1/audio/transcriptions"
 #define CONFIG_DEFAULT_STT_MODEL "gpt-4o-mini-transcribe"
 
+/* What the Send button strikes. Enter is the safe default; the modified forms
+ * are what chat apps (Slack, Discord, iMessage on macOS) bind to "send" so a
+ * bare Enter inserts a newline instead. Chosen on the setup portal and stored
+ * as a small integer, so adding a form must only ever append here. */
+typedef enum {
+    SEND_KEY_ENTER = 0,
+    SEND_KEY_CMD_ENTER,   /* GUI (Cmd/Win) + Enter */
+    SEND_KEY_CTRL_ENTER,  /* Ctrl + Enter */
+    SEND_KEY_SHIFT_ENTER, /* Shift + Enter */
+    SEND_KEY_COUNT,
+} send_key_t;
+
 typedef struct {
     char wifi_ssid[CONFIG_SSID_CAP];
     char wifi_pass[CONFIG_PASS_CAP];
@@ -37,6 +49,7 @@ typedef struct {
      * with, not a preference of ours: the host interprets our scancodes
      * through whatever layout it has set. */
     char kbd_layout[CONFIG_KBD_LAYOUT_CAP];
+    send_key_t send_key;
 } app_config_t;
 
 /* Reads NVS into *cfg. Missing keys yield empty strings, not an error.

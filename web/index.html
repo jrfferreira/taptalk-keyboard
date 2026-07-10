@@ -128,17 +128,43 @@
     48%, 100% { opacity: 0 }
   }
 
-  /* The spectrum analyser: each bar bobs on its own clock (the per-bar duration
-     and delay are inline in the SVG), so they dance independently like a real
-     analyser rather than pulsing together. Anchored at the bottom via a
-     bottom transform-origin, so scaleY grows the bars upward. */
+  /* The spectrum analyser rides the master cycle: the bars sit as flat stubs
+     while idle and only dance inside the recording window (9-43%, the stretch
+     where the button is red) — the mic is what feeds them. Five keyframe
+     variants, dealt out per bar via the v1-v5 classes, stop them pulsing in
+     unison. Anchored at the bottom via a bottom transform-origin, so scaleY
+     grows the bars upward. */
   .spec { opacity: .5 }
   .sb {
     transform-box: fill-box; transform-origin: 50% 100%;
-    animation-name: sb; animation-iteration-count: infinite;
+    animation-duration: var(--cycle); animation-iteration-count: infinite;
     animation-timing-function: ease-in-out;
   }
-  @keyframes sb { 0%,100% { transform: scaleY(.12) } 50% { transform: scaleY(1) } }
+  .v1 { animation-name: sb1 }
+  .v2 { animation-name: sb2 }
+  .v3 { animation-name: sb3 }
+  .v4 { animation-name: sb4 }
+  .v5 { animation-name: sb5 }
+  @keyframes sb1 { 0%,8%,48%,100% { transform: scaleY(.12) }
+    12% { transform: scaleY(.9) }  18% { transform: scaleY(.3) }
+    24% { transform: scaleY(1) }   30% { transform: scaleY(.45) }
+    36% { transform: scaleY(.85) } 42% { transform: scaleY(.25) } }
+  @keyframes sb2 { 0%,8%,48%,100% { transform: scaleY(.12) }
+    14% { transform: scaleY(.7) }  20% { transform: scaleY(1) }
+    26% { transform: scaleY(.35) } 32% { transform: scaleY(.9) }
+    38% { transform: scaleY(.4) }  44% { transform: scaleY(.75) } }
+  @keyframes sb3 { 0%,8%,48%,100% { transform: scaleY(.12) }
+    11% { transform: scaleY(.5) }  17% { transform: scaleY(.95) }
+    23% { transform: scaleY(.4) }  29% { transform: scaleY(.8) }
+    35% { transform: scaleY(.3) }  41% { transform: scaleY(1) } }
+  @keyframes sb4 { 0%,8%,48%,100% { transform: scaleY(.12) }
+    13% { transform: scaleY(1) }   19% { transform: scaleY(.45) }
+    25% { transform: scaleY(.75) } 31% { transform: scaleY(.3) }
+    37% { transform: scaleY(.95) } 43% { transform: scaleY(.5) } }
+  @keyframes sb5 { 0%,8%,48%,100% { transform: scaleY(.12) }
+    10% { transform: scaleY(.6) }  16% { transform: scaleY(.25) }
+    22% { transform: scaleY(.85) } 28% { transform: scaleY(1) }
+    34% { transform: scaleY(.5) }  40% { transform: scaleY(.9) } }
 
 
   /* ---- right: the words land ---- */
@@ -359,7 +385,7 @@
 
 <div class="stage">
   <!-- Stylised 368×448 AMOLED, drawn to match the real UI. -->
-  <svg class="device" viewBox="0 0 448 368" role="img" aria-label="The device in landscape: a large hold-to-talk button in the middle, a USB icon top-left, Wi-Fi top-right, a settings cog bottom-right, and a live spectrum analyser rising from the bottom edge behind the button">
+  <svg class="device" viewBox="0 0 448 368" role="img" aria-label="The device in landscape: a large hold-to-talk button in the middle, a USB icon top-left, a Wi-Fi icon top-right that doubles as the door to setup, an amber Undo action bottom-left, a green Send action bottom-right, and a live spectrum analyser rising from the bottom edge behind the button">
       <defs>
         <linearGradient id="bezel" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stop-color="#2b3540"/><stop offset="1" stop-color="#141a20"/>
@@ -397,34 +423,34 @@
         <ellipse cx="224" cy="357" rx="240" ry="120" fill="url(#halo)"/>
         <!-- spectrum analyser: full-width, low opacity, behind the button -->
         <g class="spec" fill="#3ddc97">
-        <rect class="sb" x="34.0" y="290.9" width="9" height="53.1" rx="3" style="animation-duration:0.90s;animation-delay:-0.00s"/>
-        <rect class="sb" x="48.1" y="285.6" width="9" height="58.4" rx="3" style="animation-duration:1.03s;animation-delay:-0.07s"/>
-        <rect class="sb" x="62.1" y="279.0" width="9" height="65.0" rx="3" style="animation-duration:1.16s;animation-delay:-0.14s"/>
-        <rect class="sb" x="76.2" y="271.3" width="9" height="72.7" rx="3" style="animation-duration:1.29s;animation-delay:-0.21s"/>
-        <rect class="sb" x="90.3" y="263.0" width="9" height="81.0" rx="3" style="animation-duration:1.42s;animation-delay:-0.28s"/>
-        <rect class="sb" x="104.4" y="254.8" width="9" height="89.2" rx="3" style="animation-duration:0.90s;animation-delay:-0.35s"/>
-        <rect class="sb" x="118.4" y="247.4" width="9" height="96.6" rx="3" style="animation-duration:1.03s;animation-delay:-0.42s"/>
-        <rect class="sb" x="132.5" y="241.7" width="9" height="102.3" rx="3" style="animation-duration:1.16s;animation-delay:-0.49s"/>
-        <rect class="sb" x="146.6" y="238.4" width="9" height="105.6" rx="3" style="animation-duration:1.29s;animation-delay:-0.56s"/>
-        <rect class="sb" x="160.7" y="238.0" width="9" height="106.0" rx="3" style="animation-duration:1.42s;animation-delay:-0.63s"/>
-        <rect class="sb" x="174.7" y="240.5" width="9" height="103.5" rx="3" style="animation-duration:0.90s;animation-delay:-0.70s"/>
-        <rect class="sb" x="188.8" y="245.6" width="9" height="98.4" rx="3" style="animation-duration:1.03s;animation-delay:-0.77s"/>
-        <rect class="sb" x="202.9" y="252.6" width="9" height="91.4" rx="3" style="animation-duration:1.16s;animation-delay:-0.84s"/>
-        <rect class="sb" x="217.0" y="260.7" width="9" height="83.3" rx="3" style="animation-duration:1.29s;animation-delay:-0.91s"/>
-        <rect class="sb" x="231.0" y="269.0" width="9" height="75.0" rx="3" style="animation-duration:1.42s;animation-delay:-0.98s"/>
-        <rect class="sb" x="245.1" y="277.0" width="9" height="67.0" rx="3" style="animation-duration:0.90s;animation-delay:-1.05s"/>
-        <rect class="sb" x="259.2" y="283.9" width="9" height="60.1" rx="3" style="animation-duration:1.03s;animation-delay:-0.02s"/>
-        <rect class="sb" x="273.3" y="289.6" width="9" height="54.4" rx="3" style="animation-duration:1.16s;animation-delay:-0.09s"/>
-        <rect class="sb" x="287.3" y="293.9" width="9" height="50.1" rx="3" style="animation-duration:1.29s;animation-delay:-0.16s"/>
-        <rect class="sb" x="301.4" y="297.1" width="9" height="46.9" rx="3" style="animation-duration:1.42s;animation-delay:-0.23s"/>
-        <rect class="sb" x="315.5" y="299.3" width="9" height="44.7" rx="3" style="animation-duration:0.90s;animation-delay:-0.30s"/>
-        <rect class="sb" x="329.6" y="300.7" width="9" height="43.3" rx="3" style="animation-duration:1.03s;animation-delay:-0.37s"/>
-        <rect class="sb" x="343.6" y="301.6" width="9" height="42.4" rx="3" style="animation-duration:1.16s;animation-delay:-0.44s"/>
-        <rect class="sb" x="357.7" y="302.1" width="9" height="41.9" rx="3" style="animation-duration:1.29s;animation-delay:-0.51s"/>
-        <rect class="sb" x="371.8" y="302.4" width="9" height="41.6" rx="3" style="animation-duration:1.42s;animation-delay:-0.58s"/>
-        <rect class="sb" x="385.9" y="302.6" width="9" height="41.4" rx="3" style="animation-duration:0.90s;animation-delay:-0.65s"/>
-        <rect class="sb" x="399.9" y="302.6" width="9" height="41.4" rx="3" style="animation-duration:1.03s;animation-delay:-0.72s"/>
-        <rect class="sb" x="414.0" y="302.7" width="9" height="41.3" rx="3" style="animation-duration:1.16s;animation-delay:-0.79s"/>
+        <rect class="sb v1" x="34.0" y="290.9" width="9" height="53.1" rx="3"/>
+        <rect class="sb v2" x="48.1" y="285.6" width="9" height="58.4" rx="3"/>
+        <rect class="sb v3" x="62.1" y="279.0" width="9" height="65.0" rx="3"/>
+        <rect class="sb v4" x="76.2" y="271.3" width="9" height="72.7" rx="3"/>
+        <rect class="sb v5" x="90.3" y="263.0" width="9" height="81.0" rx="3"/>
+        <rect class="sb v1" x="104.4" y="254.8" width="9" height="89.2" rx="3"/>
+        <rect class="sb v2" x="118.4" y="247.4" width="9" height="96.6" rx="3"/>
+        <rect class="sb v3" x="132.5" y="241.7" width="9" height="102.3" rx="3"/>
+        <rect class="sb v4" x="146.6" y="238.4" width="9" height="105.6" rx="3"/>
+        <rect class="sb v5" x="160.7" y="238.0" width="9" height="106.0" rx="3"/>
+        <rect class="sb v1" x="174.7" y="240.5" width="9" height="103.5" rx="3"/>
+        <rect class="sb v2" x="188.8" y="245.6" width="9" height="98.4" rx="3"/>
+        <rect class="sb v3" x="202.9" y="252.6" width="9" height="91.4" rx="3"/>
+        <rect class="sb v4" x="217.0" y="260.7" width="9" height="83.3" rx="3"/>
+        <rect class="sb v5" x="231.0" y="269.0" width="9" height="75.0" rx="3"/>
+        <rect class="sb v1" x="245.1" y="277.0" width="9" height="67.0" rx="3"/>
+        <rect class="sb v2" x="259.2" y="283.9" width="9" height="60.1" rx="3"/>
+        <rect class="sb v3" x="273.3" y="289.6" width="9" height="54.4" rx="3"/>
+        <rect class="sb v4" x="287.3" y="293.9" width="9" height="50.1" rx="3"/>
+        <rect class="sb v5" x="301.4" y="297.1" width="9" height="46.9" rx="3"/>
+        <rect class="sb v1" x="315.5" y="299.3" width="9" height="44.7" rx="3"/>
+        <rect class="sb v2" x="329.6" y="300.7" width="9" height="43.3" rx="3"/>
+        <rect class="sb v3" x="343.6" y="301.6" width="9" height="42.4" rx="3"/>
+        <rect class="sb v4" x="357.7" y="302.1" width="9" height="41.9" rx="3"/>
+        <rect class="sb v5" x="371.8" y="302.4" width="9" height="41.6" rx="3"/>
+        <rect class="sb v1" x="385.9" y="302.6" width="9" height="41.4" rx="3"/>
+        <rect class="sb v2" x="399.9" y="302.6" width="9" height="41.4" rx="3"/>
+        <rect class="sb v3" x="414.0" y="302.7" width="9" height="41.3" rx="3"/>
         </g>
       </g>
 
@@ -436,7 +462,7 @@
         <path d="M0 8.5 7.5 4.5V0"/><circle cx="7.5" cy="-2.5" r="2.6" fill="#3ddc97" stroke="none"/>
       </g>
 
-      <!-- top-right: Wi-Fi -->
+      <!-- top-right: Wi-Fi (tapping it is the door to setup) -->
       <g transform="translate(396 54)" stroke="#3ddc97" stroke-width="2.4" fill="none" stroke-linecap="round">
         <path d="M-14-6a20 20 0 0 1 28 0"/><path d="M-8 1a12 12 0 0 1 16 0"/>
         <circle cx="0" cy="9" r="2.4" fill="#3ddc97" stroke="none"/>
@@ -455,15 +481,22 @@
         <rect x="-17" y="34" width="34" height="6" rx="3"/>
       </g>
 
-      <!-- bottom-left: status text -->
-      <text class="statusline" x="30" y="332" fill="#8a97a3" font-family="system-ui,sans-serif" font-size="15">Ready</text>
+      <!-- bottom-left: Undo (backspaces the whole sentence away) -->
+      <g transform="translate(46 328)">
+        <text text-anchor="middle" y="-13" fill="#f5b638" font-family="system-ui,sans-serif" font-size="11" font-weight="600">Undo</text>
+        <g stroke="#f5b638" fill="none" stroke-linecap="round" stroke-linejoin="round">
+          <path stroke-width="2.2" d="M-12 7-4 -.5H9.5a2.5 2.5 0 0 1 2.5 2.5v10a2.5 2.5 0 0 1-2.5 2.5H-4Z"/>
+          <path stroke-width="2" d="M-.5 3.5 6.5 10.5M6.5 3.5-.5 10.5"/>
+        </g>
+      </g>
 
-      <!-- bottom-right: settings -->
-      <g transform="translate(410 330)" stroke="#6b7a88" fill="none">
-        <circle cx="0" cy="0" r="8.4" stroke-width="2.2"/><circle cx="0" cy="0" r="3.2" stroke-width="2.2"/>
-        <g stroke-width="3.2" stroke-linecap="round">
-          <path d="M0-8.6v-3.6M0 8.6v3.6M-8.6 0h-3.6M8.6 0h3.6"/>
-          <path d="M-6.1-6.1-8.6-8.6M6.1 6.1 8.6 8.6M-6.1 6.1-8.6 8.6M6.1-6.1 8.6-8.6"/>
+      <!-- bottom-right: Send (return arrow; strikes the configured chord),
+           where the affirmative action of a dialog sits -->
+      <g transform="translate(402 328)">
+        <text text-anchor="middle" y="-13" fill="#3ddc97" font-family="system-ui,sans-serif" font-size="11" font-weight="600">Send</text>
+        <g stroke="#3ddc97" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M11 -2v9H-8"/>
+          <path d="M-2 1-8 7l6 6"/>
         </g>
       </g>
     </svg>
