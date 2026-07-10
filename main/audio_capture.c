@@ -31,6 +31,7 @@ static volatile size_t s_trim_bytes;
 static uint32_t s_clip_ms;
 static int s_clip_peak;
 static int s_live_peak;
+static const char *s_reject; /* why the last clip was unusable, or "" */
 
 static int16_t s_chunk[CHUNK_SAMPLES];
 
@@ -143,7 +144,11 @@ esp_err_t audio_capture_start(void)
         .sample_rate     = AUDIO_SAMPLE_RATE,
     };
     ESP_RETURN_ON_FALSE(esp_codec_dev_open(s_mic, &fs) == 0, ESP_FAIL, TAG, "codec open");
-    ESP_RETURN_ON_FALSE(esp_codec_dev_set_in_gain(s_mic, 30.0f) == 0, ESP_FAIL, TAG, "set gain");
+    /* 42 dB, not 30. At 30 dB, normal speech peaked at ~500/32767 -- below the
+     * 600 silence guard -- so clips were silently dropped as TOO QUIET and never
+     * uploaded. +12 dB is ~4x amplitude (peak ~2000), clear of the guard with
+     * headroom below full scale for loud input. */
+    ESP_RETURN_ON_FALSE(esp_codec_dev_set_in_gain(s_mic, 42.0f) == 0, ESP_FAIL, TAG, "set gain");
 
     /* Core 1: I2S DMA has hard deadlines and core 0 carries Wi-Fi. */
     BaseType_t ok = xTaskCreatePinnedToCore(capture_task, "audio_cap", 4096, NULL, 6, NULL, 1);
@@ -177,17 +182,21 @@ void audio_record_end(void)
      * written straight into s_clip + 44, so no copy is needed. */
     wav_write_header(s_clip, WAV_HEADER_SIZE, (uint32_t)s_cursor, AUDIO_SAMPLE_RATE, AUDIO_BITS,
                      AUDIO_CHANNELS);
+    /* Only a too-short tap is rejected now. A quiet clip still uploads: if the
+     * user held the button and spoke, that intent is honoured, and true silence
+     * comes back as empty text ("No speech detected") rather than being eaten
+     * here. A client-side volume gate that discards a deliberate hold is wrong. */
+    s_reject = s_clip_ms < AUDIO_MIN_CLIP_MS ? "Too short - hold and speak" : "";
     ESP_LOGI(TAG, "record: end -- %u ms, %u bytes, peak %d/32767 (%s)", (unsigned)s_clip_ms,
-             (unsigned)s_cursor, s_clip_peak,
-             audio_clip_usable() ? "usable"
-             : s_clip_ms < AUDIO_MIN_CLIP_MS ? "TOO SHORT"
-                                             : "TOO QUIET");
+             (unsigned)s_cursor, s_clip_peak, s_reject[0] ? s_reject : "usable");
 }
 
 bool audio_clip_usable(void)
 {
-    return s_clip_ms >= AUDIO_MIN_CLIP_MS && s_clip_peak >= AUDIO_SILENCE_PEAK;
+    return s_clip_ms >= AUDIO_MIN_CLIP_MS;
 }
+
+const char *audio_clip_reject_reason(void) { return s_reject; }
 
 uint32_t audio_clip_ms(void) { return s_clip_ms; }
 int audio_clip_peak(void) { return s_clip_peak; }

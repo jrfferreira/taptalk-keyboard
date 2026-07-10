@@ -18,9 +18,10 @@
 #define AUDIO_MAX_SECONDS 30
 #define AUDIO_MAX_PCM_BYTES ((size_t)AUDIO_MAX_SECONDS * AUDIO_SAMPLE_RATE * (AUDIO_BITS / 8) * AUDIO_CHANNELS)
 
-/* Below these, a clip is a stray tap or a silent room, not speech. */
+/* A clip shorter than this is an accidental tap, not speech. There is no
+ * peak/volume gate: a deliberate hold uploads even if quiet, and true silence
+ * returns empty text from the backend rather than being dropped locally. */
 #define AUDIO_MIN_CLIP_MS   300
-#define AUDIO_SILENCE_PEAK  600 /* of 32767; ~ -35 dBFS */
 
 /* Allocates the PSRAM clip, brings up I2S at 16 kHz, opens the codec, and
  * spawns the capture task. Must run after pmic_init(). */
@@ -32,6 +33,10 @@ void audio_record_end(void);   /* stop appending, backfill the WAV header */
 /* True once a completed clip is long enough and loud enough to be worth
  * uploading. Feeds the sm_guards_t.clip_usable guard. */
 bool audio_clip_usable(void);
+
+/* Why the last completed clip was unusable ("Too quiet ...", "Too short ..."),
+ * or "" if it was fine. Valid after audio_record_end(), survives discard. */
+const char *audio_clip_reject_reason(void);
 
 uint32_t audio_clip_ms(void);
 int audio_clip_peak(void);      /* 0..32767 */

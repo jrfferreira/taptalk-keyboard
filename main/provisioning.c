@@ -207,6 +207,24 @@ static esp_err_t send_html(httpd_req_t *req, const char *html, size_t len)
  * pop the "sign in to network" sheet. */
 static esp_err_t get_any(httpd_req_t *req)
 {
+    /* A phone decides it is behind a captive portal by fetching a known URL and
+     * checking it got the expected answer. Apple wants a page titled "Success",
+     * Android wants a bare 204, Windows wants "Microsoft Connect Test".
+     *
+     * Answering all of them with our form gives the right verdict but the wrong
+     * behaviour: iOS marks the network as captive and then waits to be
+     * redirected. A 302 to the portal is what actually opens the sheet. */
+    char host[64] = {0};
+    httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host));
+
+    if (strcmp(host, AP_IP) != 0) {
+        httpd_resp_set_status(req, "302 Found");
+        httpd_resp_set_hdr(req, "Location", "http://" AP_IP "/");
+        httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+        httpd_resp_send(req, NULL, 0);
+        ESP_LOGD(TAG, "probe for \"%s\" -> 302", host);
+        return ESP_OK;
+    }
     return send_html(req, PAGE_FORM, sizeof(PAGE_FORM) - 1);
 }
 
@@ -420,8 +438,29 @@ esp_err_t provisioning_start(prov_info_t *info)
      * switching modes; a running STA holds the netif we are about to replace. */
     esp_wifi_stop();
 
-    esp_netif_create_default_wifi_ap();
+    esp_netif_t *ap = esp_netif_create_default_wifi_ap();
     net_wifi_ensure_sta_netif();
+
+    /* Hand the client a DNS server, namely us.
+     *
+     * ESP-IDF's SoftAP DHCP server does NOT offer one by default. Without it a
+     * phone joins, gets an address, and has nowhere to resolve
+     * captive.apple.com -- so its probe fails, no portal sheet appears, and the
+     * DNS responder we so carefully fuzzed sits on port 53 with nobody asking
+     * it anything. The network joins. The page never opens. */
+    esp_netif_dns_info_t dns = {.ip = {.type = ESP_IPADDR_TYPE_V4}};
+    dns.ip.u_addr.ip4.addr = esp_ip4addr_aton(AP_IP);
+
+    /* DHCP is not running yet, so the stop is a no-op; set_dns_info refuses
+     * while it runs, hence the ordering. */
+    (void)esp_netif_dhcps_stop(ap);
+    ESP_RETURN_ON_ERROR(esp_netif_set_dns_info(ap, ESP_NETIF_DNS_MAIN, &dns), TAG, "dns info");
+
+    uint8_t offer_dns = 2; /* dhcps_offer_option: OFFER_DNS */
+    ESP_RETURN_ON_ERROR(esp_netif_dhcps_option(ap, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER,
+                                               &offer_dns, sizeof(offer_dns)),
+                        TAG, "dhcps dns option");
+    (void)esp_netif_dhcps_start(ap);
 
     wifi_config_t wc = {0};
     /* wc.ap.ssid is 32 bytes with no room for a terminator, so copy by length

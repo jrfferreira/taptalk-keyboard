@@ -6,6 +6,8 @@ idf_component_register(
         "provisioning.c"
         "pmic.c"
         "ui.c"
+        "assets/bg_main.c"
+        "assets/btn_mic.c"
         "audio_capture.c"
         "beeper.c"
         "diagnostics.c"

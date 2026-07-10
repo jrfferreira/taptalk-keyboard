@@ -40,4 +40,25 @@ menu "TapTalk"
             BEEP_PRESS_MS of every clip. Turning this off also turns off that
             discard.
 
+    config TAPTALK_HID_DELAY_MS
+        int "Delay before installing TinyUSB (debug)"
+        default 0
+        range 0 60000
+        help
+            Installing TinyUSB moves the console from USB-Serial-JTAG to a CDC
+            interface, and the USB-Serial-JTAG port disappears at that moment.
+            Every log line before that is only visible on a port that then goes
+            away -- which is why a boot-time hang looks like silence.
+
+            Set this to e.g. 20000 to keep the boot console alive long enough to
+            watch what happens. Leave it at 0 for real builds: it delays the
+            keyboard becoming usable by exactly this much.
+
+    config TAPTALK_WATCH_LVGL
+        bool "Subscribe the LVGL task to the task watchdog (debug)"
+        default n
+        help
+            Makes a wedged render task print its own backtrace every few
+            seconds. Noisy on purpose; never enable in a real build.
+
 endmenu

@@ -78,7 +78,7 @@ static void run_actions(uint32_t actions)
     if (actions & ACT_PROV_START) {
         prov_info_t info;
         if (provisioning_start(&info) == ESP_OK) {
-            ui_show_setup(&info);
+            ui_show_setup(&info, config_is_provisioned(&s_cfg));
         } else {
             ui_set_error("Setup AP failed");
         }
@@ -119,6 +119,12 @@ static void run_actions(uint32_t actions)
     }
     if (actions & ACT_TYPE_ABORT) {
         hid_kbd_abort();
+    }
+    if (actions & ACT_HINT_QUIET) {
+        /* Before ACT_CLIP_DISCARD below wipes the reason. This is what turns
+         * "button goes red, then nothing" into an explanation. */
+        beeper_play(BEEP_ERROR);
+        ui_set_error(audio_clip_reject_reason());
     }
     if (actions & ACT_CLIP_DISCARD) {
         audio_clip_discard();

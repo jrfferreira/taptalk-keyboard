@@ -189,6 +189,14 @@ void app_main(void)
      * inherits the microphone's 16 kHz rather than defaulting to 22050. */
     beeper_init();
 
+#if CONFIG_TAPTALK_HID_DELAY_MS > 0
+    /* Debug: keep the USB-Serial-JTAG console alive a while longer, because the
+     * next line takes it away and everything interesting happens before then. */
+    ESP_LOGW(TAG, "holding TinyUSB back for %d ms so the boot console survives",
+             CONFIG_TAPTALK_HID_DELAY_MS);
+    vTaskDelay(pdMS_TO_TICKS(CONFIG_TAPTALK_HID_DELAY_MS));
+#endif
+
     /* Last, and deliberately so: this is the line that costs us the
      * USB-Serial-JTAG console. Everything worth watching has already logged. */
     ESP_ERROR_CHECK(hid_kbd_start());

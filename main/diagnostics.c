@@ -5,6 +5,7 @@
 #include "app_sm.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "hid_kbd.h"
@@ -40,11 +41,17 @@ static void report_task(void *arg)
         const size_t in_free  = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
         const size_t in_block = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
         const size_t ps_free  = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+        /* The SPI driver allocates its transaction buffers from here. When this
+         * runs dry, esp_lcd_panel_draw_bitmap() fails, lv_display_flush_ready()
+         * is never called, and the LVGL task waits forever holding the lock. */
+        const size_t dma_free  = heap_caps_get_free_size(MALLOC_CAP_DMA);
+        const size_t dma_block = heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
 
         ESP_LOGI(TAG, "%s | ui %" PRIu32 "/5s audio %" PRIu32 "/5s sm %" PRIu32
-                      " | heap %uK (max block %uK) psram %uK | usb %s",
+                      " | heap %uK (blk %uK) dma %uK (blk %uK) psram %uK | usb %s",
                  sm_state_name(app_sm_state()), d_ui, d_audio, d_sm, (unsigned)(in_free / 1024),
-                 (unsigned)(in_block / 1024), (unsigned)(ps_free / 1024),
+                 (unsigned)(in_block / 1024), (unsigned)(dma_free / 1024),
+                 (unsigned)(dma_block / 1024), (unsigned)(ps_free / 1024),
                  hid_kbd_mounted() ? "up" : "down");
 
         /* Name the wedged task rather than leaving it to be inferred from
@@ -66,6 +73,23 @@ static void report_task(void *arg)
 
 esp_err_t diag_start(void)
 {
+#if CONFIG_TAPTALK_WATCH_LVGL
+    /* Subscribe the render task to the task watchdog WITHOUT ever feeding it.
+     * A healthy LVGL task loops every few ms; a wedged one sits in one call.
+     * Either way the WDT fires -- but the point is the backtrace it prints,
+     * which names the exact function the task is stuck in. Decode it with:
+     *   xtensa-esp32s3-elf-addr2line -pfiaC -e build/taptalk-keyboard.elf <addrs>
+     * Debug builds only: this floods the log on purpose. */
+    TaskHandle_t lvgl = xTaskGetHandle("taskLVGL");
+    if (lvgl != NULL) {
+        esp_task_wdt_add(lvgl);
+        ESP_LOGW(TAG, "taskLVGL subscribed to the WDT; expect a backtrace every %d s",
+                 CONFIG_ESP_TASK_WDT_TIMEOUT_S);
+    } else {
+        ESP_LOGE(TAG, "no taskLVGL handle -- the render task was never created!");
+    }
+#endif
+
     /* Priority 1: below everything it watches, so a busy system starves this
      * task rather than the work it is reporting on. */
     const BaseType_t ok = xTaskCreatePinnedToCore(report_task, "diag", 3072, NULL, 1, NULL, 0);
