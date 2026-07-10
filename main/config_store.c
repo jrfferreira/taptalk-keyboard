@@ -51,12 +51,12 @@ esp_err_t config_load(app_config_t *cfg)
     } else if (err != ESP_OK) {
         return err;
     } else {
-        ESP_RETURN_ON_ERROR(get_str(h, K_SSID, cfg->wifi_ssid, sizeof(cfg->wifi_ssid)), TAG, "ssid");
-        ESP_RETURN_ON_ERROR(get_str(h, K_PASS, cfg->wifi_pass, sizeof(cfg->wifi_pass)), TAG, "pass");
-        ESP_RETURN_ON_ERROR(get_str(h, K_KEY, cfg->api_key, sizeof(cfg->api_key)), TAG, "apikey");
-        ESP_RETURN_ON_ERROR(get_str(h, K_STT_URL, cfg->stt_url, sizeof(cfg->stt_url)), TAG, "stt url");
-        ESP_RETURN_ON_ERROR(get_str(h, K_STT_MODEL, cfg->stt_model, sizeof(cfg->stt_model)), TAG, "stt model");
-        ESP_RETURN_ON_ERROR(get_str(h, K_STT_LANG, cfg->stt_language, sizeof(cfg->stt_language)), TAG, "stt language");
+        err = get_str(h, K_SSID, cfg->wifi_ssid, sizeof(cfg->wifi_ssid));
+        if (err == ESP_OK) err = get_str(h, K_PASS, cfg->wifi_pass, sizeof(cfg->wifi_pass));
+        if (err == ESP_OK) err = get_str(h, K_KEY, cfg->api_key, sizeof(cfg->api_key));
+        if (err == ESP_OK) err = get_str(h, K_STT_URL, cfg->stt_url, sizeof(cfg->stt_url));
+        if (err == ESP_OK) err = get_str(h, K_STT_MODEL, cfg->stt_model, sizeof(cfg->stt_model));
+        if (err == ESP_OK) err = get_str(h, K_STT_LANG, cfg->stt_language, sizeof(cfg->stt_language));
 
         /* Absent on a device provisioned before Send existed: fall back to a
          * bare Enter, and ignore a corrupt value the same way. */
@@ -67,6 +67,7 @@ esp_err_t config_load(app_config_t *cfg)
         cfg->send_key = (send_key_t)sk;
 
         nvs_close(h);
+        ESP_RETURN_ON_ERROR(err, TAG, "load");
     }
 
 #ifdef HAVE_SECRETS_SEED
