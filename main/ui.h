@@ -27,6 +27,10 @@ void ui_set_clip(uint32_t ms, int peak);
 void ui_set_wifi(bool connected);
 void ui_set_usb(bool connected);
 
+/* A dictation has been typed and can now be Sent or Undone. Lights the two
+ * bottom-corner buttons; they are dimmed and inert otherwise. */
+void ui_set_pending(bool pending);
+
 /* Transient, low-stakes: "Transcribing…", "Typing…". Dim text, no badge. */
 void ui_set_status(const char *text);
 
