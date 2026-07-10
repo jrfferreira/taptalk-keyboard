@@ -19,6 +19,10 @@ esp_err_t net_init_common(void);
  * needs it to associate. Idempotent. */
 void net_wifi_ensure_sta_netif(void);
 
+/* Cap Wi-Fi TX power to keep association bursts from browning out the board.
+ * Call once right after esp_wifi_start(). */
+void net_wifi_limit_tx_power(void);
+
 /* Associates using stored credentials. Posts EV_WIFI_UP on success; a
  * disconnect posts EV_WIFI_DOWN and the state machine owns the retry policy. */
 esp_err_t net_wifi_sta_connect(const app_config_t *cfg);

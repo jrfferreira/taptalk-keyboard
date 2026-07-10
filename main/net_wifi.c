@@ -22,6 +22,14 @@ static const char *TAG = "net";
 #define SANE_EPOCH 1735689600 /* 2025-01-01 */
 #define SNTP_TIMEOUT_MS 20000
 
+/* Wi-Fi max TX power, in 0.25 dBm units. The default is 80 (20 dBm); at that
+ * level a TX burst -- the AP handshake when a phone joins for setup, or the
+ * association in normal use -- draws a current spike that dips VDD far enough to
+ * trip the AXP2101 and reset (or latch off) the board. 52 = 13 dBm is ~1/5 the
+ * RF power and current, still ample for a home router or an adjacent phone.
+ * This is the single biggest lever against the setup-time brownout. */
+#define WIFI_MAX_TX_QDBM 52
+
 static uint32_t s_retries;
 static bool s_sta_started;
 static bool s_sta_netif;
@@ -98,6 +106,20 @@ void net_wifi_ensure_sta_netif(void)
     }
 }
 
+/* esp_wifi_set_max_tx_power requires the driver to be started, so every caller
+ * invokes this right after its esp_wifi_start(). Never fatal: a board that
+ * refuses the cap still runs, just closer to the brownout. */
+void net_wifi_limit_tx_power(void)
+{
+    const esp_err_t err = esp_wifi_set_max_tx_power(WIFI_MAX_TX_QDBM);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "TX power capped at %d.%d dBm (brownout guard)", WIFI_MAX_TX_QDBM / 4,
+                 (WIFI_MAX_TX_QDBM % 4) * 25);
+    } else {
+        ESP_LOGW(TAG, "could not cap TX power: %s", esp_err_to_name(err));
+    }
+}
+
 esp_err_t net_wifi_sta_connect(const app_config_t *cfg)
 {
     s_want_connect = true;
@@ -120,6 +142,7 @@ esp_err_t net_wifi_sta_connect(const app_config_t *cfg)
     ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), TAG, "sta mode");
     ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_STA, &wc), TAG, "sta config");
     ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "wifi start");
+    net_wifi_limit_tx_power();
 
     s_sta_started = true;
     ESP_LOGI(TAG, "associating with \"%s\"", cfg->wifi_ssid);
