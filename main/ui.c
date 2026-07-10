@@ -7,12 +7,14 @@
 #include "audio_capture.h"
 #include "assets/bg_main.h"
 #include "assets/btn_mic.h"
+#include "assets/ic_halo.h"
 #include "assets/ic_mic.h"
 #include "beeper.h"
 #include "diagnostics.h"
 #include "bsp/esp-bsp.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
@@ -32,8 +34,12 @@ static const char *TAG = "ui";
 #define SPEC_BARS  AUDIO_SPECTRUM_BANDS
 #define SPEC_BAR_W 10
 #define SPEC_STEP  16   /* bar pitch; SPEC_BARS * SPEC_STEP ~ screen width */
-#define SPEC_H     150  /* max bar height */
-#define SPEC_MIN   0  /* zero at silence: no dashes along the bottom */
+#define SPEC_H     230  /* max bar height -- tall, so speech is unmistakable */
+#define SPEC_MIN   0    /* zero at silence */
+/* Push the whole bar field a few px below the screen edge, so a short (or zero)
+ * bar is clipped off-screen entirely -- no stub or shadow lingering along the
+ * bottom when the room is quiet. A bar has to be taller than this to show. */
+#define SPEC_SINK  14
 #define ICON_HIT 72   /* transparent touch target; the glyph is smaller than the tap */
 #define EDGE 16       /* inset from the rounded corners of the panel */
 
@@ -77,7 +83,7 @@ static ui_model_t s_model;
 static SemaphoreHandle_t s_lock;
 
 static lv_obj_t *s_main, *s_setup;
-static lv_obj_t *s_btn, *s_mic, *s_timer, *s_spinner, *s_status;
+static lv_obj_t *s_btn, *s_mic, *s_timer, *s_spinner, *s_status, *s_halo;
 static lv_obj_t *s_ico_usb, *s_ico_wifi, *s_badge, *s_badge_hit;
 static lv_obj_t *s_send_hit, *s_undo_hit; /* bottom-corner Send / Undo actions */
 static lv_obj_t *s_sheet, *s_sheet_text;
@@ -130,6 +136,62 @@ void ui_clear_msg(void) { set_msg("", false); }
 
 /* ------------------------------------------------------------------ paint */
 
+/* ------------------------------------------------------------ screen power
+ *
+ * An always-on OLED both burns power and risks burn-in, so the panel fades to
+ * black after a stretch with no touch, and the first touch afterwards only
+ * wakes it -- it does not also start a recording. All of this state lives in the
+ * LVGL task (touch callbacks and ui_tick both run there), so no lock. */
+#define SCREEN_DIM_AFTER_MS 45000 /* idle time before the screen fades out */
+#define SCREEN_STEP_SLEEP   5     /* brightness % per 60 ms tick, fading out */
+#define SCREEN_STEP_WAKE    20    /* faster coming back, so a tap feels instant */
+
+static int64_t s_last_touch_us;
+static int     s_bright_cur = 100;
+static int     s_bright_tgt = 100;
+static bool    s_asleep;         /* dimming or dark: the next tap only wakes */
+static bool    s_swallow_release;
+
+/* Returns true if this touch was consumed purely to wake the screen. */
+static bool woke_from_touch(void)
+{
+    s_last_touch_us = esp_timer_get_time();
+    if (s_asleep) {
+        s_bright_tgt = 100;
+        s_asleep = false;
+        return true;
+    }
+    return false;
+}
+
+/* Called every tick with the current state. Fades the panel toward its target
+ * and, once idle long enough, sets that target to black. */
+static void screen_power_tick(app_state_t state)
+{
+    const bool active = (state == ST_RECORDING || state == ST_UPLOADING || state == ST_TYPING);
+    if (active) {
+        s_last_touch_us = esp_timer_get_time(); /* work in progress keeps it lit */
+        s_bright_tgt = 100;
+        s_asleep = false;
+    } else if (!s_asleep) {
+        const int64_t idle_ms = (esp_timer_get_time() - s_last_touch_us) / 1000;
+        if (idle_ms >= SCREEN_DIM_AFTER_MS) {
+            s_bright_tgt = 0;
+            s_asleep = true; /* set as soon as the fade starts, so a tap mid-fade wakes */
+        }
+    }
+
+    if (s_bright_cur != s_bright_tgt) {
+        const int step = (s_bright_tgt > s_bright_cur) ? SCREEN_STEP_WAKE : -SCREEN_STEP_SLEEP;
+        s_bright_cur += step;
+        if ((step > 0) == (s_bright_cur > s_bright_tgt)) {
+            s_bright_cur = s_bright_tgt; /* overshoot -> clamp to target */
+        }
+        bsp_display_brightness_set(s_bright_cur);
+    }
+}
+
+
 /* Runs in the LVGL task, which already holds the LVGL lock.
  *
  * Every LVGL setter invalidates the widget it touches, whether or not the
@@ -149,7 +211,16 @@ static void ui_tick(lv_timer_t *timer)
     model_unlock();
 
     if (m.state == ST_PROVISIONING) {
-        return; /* the setup screen is static */
+        return; /* the setup screen is static, and must stay lit to be scanned */
+    }
+
+    /* Fade the panel in/out for idle power saving. When it has gone fully dark
+     * there is nothing to draw, so skip the rest of the tick -- the animations
+     * would only burn CPU rendering to a black screen. The heartbeat above
+     * already ran, so the watchdog still sees the task alive. */
+    screen_power_tick(m.state);
+    if (s_asleep && s_bright_cur == 0) {
+        return;
     }
 
     static int last_rec = -1; /* neither true nor false, so the first tick paints */
@@ -220,6 +291,19 @@ static void ui_tick(lv_timer_t *timer)
                                   (unsigned)(tenths % 10));
         }
     }
+
+    /* Halo: a slow triangle-wave breath in opacity. Brighter and quicker while
+     * recording so the glow swells with the red button. The halo sits behind the
+     * opaque button, so only the ring spilling past its edge is redrawn. */
+    static int halo_v = 60, halo_dir = 1;
+    const int halo_hi = rec ? 210 : 150; /* peak opacity, of 255 */
+    const int halo_lo = rec ? 90 : 55;
+    const int halo_step = rec ? 8 : 4;
+    halo_v += halo_dir * halo_step;
+    if (halo_v >= halo_hi) { halo_v = halo_hi; halo_dir = -1; }
+    if (halo_v <= halo_lo) { halo_v = halo_lo; halo_dir = 1; }
+    lv_obj_set_style_opa(s_halo, (lv_opa_t)halo_v, LV_PART_MAIN);
+    lv_obj_set_style_image_recolor(s_halo, lv_color_hex(rec ? C_REC_TOP : C_ON), LV_PART_MAIN);
 
     /* Spectrum: each bar chases its FFT band. Fast attack, slow decay -- it
      * snaps up to a transient and eases back down, which is what makes an
@@ -312,6 +396,10 @@ static void sheet_close(lv_event_t *e)
 static void on_press(lv_event_t *e)
 {
     (void)e;
+    if (woke_from_touch()) {
+        s_swallow_release = true; /* the matching release must not act either */
+        return;                   /* a tap on a sleeping screen only wakes it */
+    }
     ESP_LOGD(TAG, "touch: press");
     beeper_play(BEEP_PRESS);
     app_sm_post(EV_BTN_PRESS);
@@ -320,6 +408,11 @@ static void on_press(lv_event_t *e)
 static void on_release(lv_event_t *e)
 {
     (void)e;
+    s_last_touch_us = esp_timer_get_time();
+    if (s_swallow_release) {
+        s_swallow_release = false;
+        return;
+    }
     ESP_LOGD(TAG, "touch: release");
     beeper_play(BEEP_RELEASE);
     app_sm_post(EV_BTN_RELEASE);
@@ -328,18 +421,42 @@ static void on_release(lv_event_t *e)
 static void on_press_lost(lv_event_t *e)
 {
     (void)e;
+    if (s_swallow_release) {
+        s_swallow_release = false;
+        return;
+    }
     ESP_LOGW(TAG, "touch: press LOST (finger slid off, or the panel stopped reporting)");
     beeper_play(BEEP_RELEASE);
     app_sm_post(EV_PRESS_LOST);
 }
-static void on_setup(lv_event_t *e) { (void)e; app_sm_post(EV_ENTER_SETUP); }
-static void on_setup_exit(lv_event_t *e) { (void)e; app_sm_post(EV_SETUP_EXIT); }
+static void on_setup(lv_event_t *e) { (void)e; if (woke_from_touch()) return; app_sm_post(EV_ENTER_SETUP); }
+static void on_setup_exit(lv_event_t *e) { (void)e; if (woke_from_touch()) return; app_sm_post(EV_SETUP_EXIT); }
+
+/* Diagnostic: logs where a tap landed in LOGICAL (post-rotation) coordinates,
+ * but only when it hit no control -- exactly the case where the cog is being
+ * missed. If a tap meant for the bottom-right cog logs somewhere else, the touch
+ * transform is wrong; if it logs at the cog's position, the hit-test is. */
+static void screen_tap_log(lv_event_t *e)
+{
+    (void)e;
+    lv_indev_t *indev = lv_indev_active();
+    if (indev == NULL) {
+        return;
+    }
+    lv_point_t p;
+    lv_indev_get_point(indev, &p);
+    ESP_LOGI(TAG, "tap (%d,%d) hit no control  [screen is %dx%d]", (int)p.x, (int)p.y,
+             (int)lv_display_get_horizontal_resolution(NULL),
+             (int)lv_display_get_vertical_resolution(NULL));
+}
 
 /* Send and Undo click (not press/release): they are one-shot taps, not a
  * hold. The beep confirms the finger; the state machine decides whether there
  * is anything to act on. */
-static void on_send(lv_event_t *e) { (void)e; beeper_play(BEEP_PRESS); app_sm_post(EV_SEND); }
-static void on_undo(lv_event_t *e) { (void)e; beeper_play(BEEP_PRESS); app_sm_post(EV_UNDO); }
+/* Like the button, a tap on a sleeping screen only wakes it -- it must not fire
+ * Send or Undo. */
+static void on_send(lv_event_t *e) { (void)e; if (woke_from_touch()) return; beeper_play(BEEP_PRESS); app_sm_post(EV_SEND); }
+static void on_undo(lv_event_t *e) { (void)e; if (woke_from_touch()) return; beeper_play(BEEP_PRESS); app_sm_post(EV_UNDO); }
 
 
 
@@ -449,6 +566,17 @@ static void build_main(void)
     lv_obj_set_style_bg_image_src(s_main, &bg_main, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_main, LV_OPA_COVER, LV_PART_MAIN);
 
+    /* A breathing halo behind the button: a soft mint glow, recoloured from an
+     * A8 mask and pulsed in opacity by ui_tick. The button is created next and
+     * therefore sits on top, so only the glow spilling past the button's edge
+     * shows -- a halo ringing it. */
+    s_halo = lv_image_create(s_main);
+    lv_image_set_src(s_halo, &ic_halo);
+    lv_obj_set_style_image_recolor(s_halo, lv_color_hex(C_ON), LV_PART_MAIN);
+    lv_obj_set_style_image_recolor_opa(s_halo, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_align(s_halo, LV_ALIGN_CENTER, 0, -8);   /* on the button centre */
+    lv_obj_remove_flag(s_halo, LV_OBJ_FLAG_CLICKABLE);
+
     /* ---- the button owns the middle ---- */
     s_btn = lv_button_create(s_main);
     lv_obj_set_size(s_btn, BTN_D, BTN_D);
@@ -551,7 +679,8 @@ static void build_main(void)
     lv_obj_t *spec = lv_obj_create(s_main);
     lv_obj_remove_style_all(spec);
     lv_obj_set_size(spec, total, SPEC_H);
-    lv_obj_align(spec, LV_ALIGN_BOTTOM_MID, 0, 0);
+    /* Offset down by SPEC_SINK so the baseline sits just off-screen. */
+    lv_obj_align(spec, LV_ALIGN_BOTTOM_MID, 0, SPEC_SINK);
     lv_obj_remove_flag(spec, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(spec, LV_OBJ_FLAG_CLICKABLE);
     for (int i = 0; i < SPEC_BARS; i++) {
@@ -562,10 +691,11 @@ static void build_main(void)
         lv_obj_align(b, LV_ALIGN_BOTTOM_LEFT, i * SPEC_STEP, 0);
         lv_obj_set_style_radius(b, 3, LV_PART_MAIN);
         lv_obj_set_style_bg_color(b, lv_color_hex(C_ON), LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(b, LV_OPA_20, LV_PART_MAIN); /* ambient, not loud */
+        lv_obj_set_style_bg_opa(b, LV_OPA_30, LV_PART_MAIN); /* ambient, not loud */
+        lv_obj_remove_flag(b, LV_OBJ_FLAG_CLICKABLE); /* never intercept the cog */
         s_spec[i] = b;
     }
-    lv_obj_move_background(spec); /* behind the button and the mic */
+    lv_obj_move_background(spec); /* behind the button and every control */
 
     /* The bottom corners are the two things you do with a dictation once it has
      * landed: Undo it (backspace the whole sentence away) on the left, Send it
@@ -581,14 +711,15 @@ static void build_main(void)
     lv_obj_set_style_opa(s_undo_hit, LV_OPA_30, LV_PART_MAIN);
 
     /* ---- transient status, and the error badge ----
-     * Status ("Transcribing...", "Typing...") sits on the left, vertically
-     * centred so multi-line text stacks around the middle rather than climbing
-     * from the bottom. The button holds the other side. */
+     * Status ("Transcribing...", "Typing...") sits along the bottom on the same
+     * row as the cog, left side -- a log line beneath the analyser, not floating
+     * beside the button. */
     s_status = lv_label_create(s_main);
     lv_obj_set_style_text_color(s_status, lv_color_hex(C_STATUS), LV_PART_MAIN);
-    lv_obj_set_width(s_status, 150);
+    lv_obj_set_width(s_status, 220);
     lv_obj_set_style_text_align(s_status, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
-    lv_obj_align(s_status, LV_ALIGN_LEFT_MID, EDGE, 0);
+    lv_obj_align(s_status, LV_ALIGN_BOTTOM_LEFT, EDGE, -(EDGE + 26));
+    lv_obj_move_foreground(s_status);
     lv_obj_add_flag(s_status, LV_OBJ_FLAG_HIDDEN);
 
     s_badge_hit = lv_obj_create(s_main);
@@ -689,6 +820,7 @@ esp_err_t ui_init(void)
 
     ESP_RETURN_ON_FALSE(bsp_display_lock(0), ESP_FAIL, TAG, "display lock");
     build_main();
+    lv_obj_add_event_cb(s_main, screen_tap_log, LV_EVENT_PRESSED, NULL);
     lv_screen_load(s_main);
     /* 60 ms: fast enough that the wave travels smoothly, slow enough that the
      * QSPI flush is not the busiest thing on the board. */

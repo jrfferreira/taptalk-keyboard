@@ -29,7 +29,7 @@ static const char *TAG = "audio";
 
 /* FFT magnitudes are much larger than raw peaks (summed over a window), so the
  * spectrum reference is far higher than the meter's. Tuned for speech. */
-#define SPECTRUM_REF 25000.0f
+#define SPECTRUM_REF 12000.0f
 
 static esp_codec_dev_handle_t s_mic;
 static uint8_t *s_clip;      /* [WAV_HEADER_SIZE][pcm...] in PSRAM */

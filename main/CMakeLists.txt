@@ -9,6 +9,7 @@ idf_component_register(
         "assets/bg_main.c"
         "assets/btn_mic.c"
         "assets/ic_mic.c"
+        "assets/ic_halo.c"
         "audio_capture.c"
         "beeper.c"
         "diagnostics.c"
