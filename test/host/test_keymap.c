@@ -130,18 +130,21 @@ TEST_MAIN("keymap", {
     CHECK(keymap_by_name("qwerty") == NULL);
     CHECK(keymap_by_name("") == NULL);
     CHECK(keymap_by_name(NULL) == NULL);
-    CHECK_EQ_INT(keymap_layouts_count, 3);
+    CHECK_EQ_INT(keymap_layouts_count, 10);
 
     /* --- invariants every built-in layout must hold --- */
     for (size_t li = 0; li < keymap_layouts_count; li++) {
         const keymap_layout_t *l = keymap_layouts[li];
         CHECK(keymap_by_name(l->name) == l);
 
-        /* Every printable ASCII char is reachable. A transcript can contain
-         * any of them, and a hole in a table drops characters silently. */
+        /* Every printable ASCII char is reachable, except the few a layout
+         * genuinely lacks (Italian has no ` or ~; Italians use Alt-codes).
+         * Those must SKIP — a visible hole, never a wrong character. A hole
+         * appearing on any other layout is a table bug. */
+        const char *missing = strcmp(l->name, "it") == 0 ? "`~" : "";
         for (uint32_t c = 0x20; c < 0x7F; c++) {
             s = resolve(l, c, &r);
-            CHECK_EQ_INT(r, KEYMAP_EXACT);
+            CHECK_EQ_INT(r, strchr(missing, (int)c) ? KEYMAP_SKIPPED : KEYMAP_EXACT);
         }
 
         /* Whatever resolves must be well-formed: a plausible step count,
@@ -322,4 +325,123 @@ TEST_MAIN("keymap", {
     CHECK_EQ_INT(r, KEYMAP_EXACT);
     CHECK_EQ_INT(s.steps[0].key, 0x08);
     CHECK_EQ_INT(s.steps[0].mod, HID_MOD_RALT);
+
+    /* --- generated layouts: spot checks against their KBD* tables --- */
+    /* The full-coverage invariants above run on all of these; the checks
+     * here pin the load-bearing keys each layout is known for, so a
+     * regenerated table cannot silently swap conventions. */
+
+    /* UK: @ and " swap places relative to US; £ rides Shift+3. */
+    CHECK(keymap_by_name("uk") == &keymap_uk);
+    s = resolve(&keymap_uk, '@', &r);
+    CHECK_EQ_INT(s.steps[0].key, HID_KEY_APOSTROPHE);
+    CHECK_EQ_INT(s.steps[0].mod, HID_MOD_LSHIFT);
+    s = resolve(&keymap_uk, '"', &r);
+    CHECK_EQ_INT(s.steps[0].key, 0x1F);
+    CHECK_EQ_INT(s.steps[0].mod, HID_MOD_LSHIFT);
+    s = resolve(&keymap_uk, 0x00A3, &r); /* £ */
+    CHECK_EQ_INT(r, KEYMAP_EXACT);
+    CHECK_EQ_INT(s.steps[0].key, 0x20);
+    s = resolve(&keymap_uk, '#', &r);
+    CHECK_EQ_INT(s.steps[0].key, HID_KEY_NONUS_HASH);
+    CHECK_EQ_INT(s.steps[0].mod, HID_MOD_NONE);
+
+    /* US International: ' ` " ~ ^ are dead keys (composed with space);
+     * common accents also sit directly on AltGr. */
+    CHECK(keymap_by_name("us-intl") == &keymap_usintl);
+    s = resolve(&keymap_usintl, '\'', &r);
+    CHECK_EQ_INT(s.n, 2);
+    CHECK_EQ_INT(s.steps[0].key, HID_KEY_APOSTROPHE);
+    CHECK_EQ_INT(s.steps[1].key, HID_KEY_SPACE);
+    s = resolve(&keymap_usintl, 0x00E1, &r); /* á prefers 1-step AltGr+A */
+    CHECK_EQ_INT(s.n, 1);
+    CHECK_EQ_INT(s.steps[0].key, HID_KEY_A);
+    CHECK_EQ_INT(s.steps[0].mod, HID_MOD_RALT);
+    s = resolve(&keymap_usintl, 0x00F1, &r); /* ñ */
+    CHECK_EQ_INT(s.steps[0].key, 0x11);
+    CHECK_EQ_INT(s.steps[0].mod, HID_MOD_RALT);
+
+    /* Spanish (Spain): ñ has its own key; ¡¿ direct; é composes on ´. */
+    CHECK(keymap_by_name("es") == &keymap_es);
+    s = resolve(&keymap_es, 0x00F1, &r); /* ñ */
+    CHECK_EQ_INT(r, KEYMAP_EXACT);
+    CHECK_EQ_INT(s.n, 1);
+    CHECK_EQ_INT(s.steps[0].key, HID_KEY_SEMICOLON);
+    s = resolve(&keymap_es, 0x00BF, &r); /* ¿ = Shift+¡ key */
+    CHECK_EQ_INT(s.steps[0].key, HID_KEY_EQUAL);
+    CHECK_EQ_INT(s.steps[0].mod, HID_MOD_LSHIFT);
+    s = resolve(&keymap_es, 0x00E9, &r); /* é */
+    CHECK_EQ_INT(s.n, 2);
+    CHECK_EQ_INT(s.steps[0].key, HID_KEY_APOSTROPHE);
+    CHECK_EQ_INT(s.steps[1].key, 0x08);
+    s = resolve(&keymap_es, 0x00E7, &r); /* ç still has a key in Spain */
+    CHECK_EQ_INT(s.n, 1);
+    CHECK_EQ_INT(s.steps[0].key, HID_KEY_NONUS_HASH);
+
+    /* Latin American Spanish: @ famously rides AltGr+Q; ¿ is unshifted. */
+    CHECK(keymap_by_name("es-la") == &keymap_esla);
+    s = resolve(&keymap_esla, '@', &r);
+    CHECK_EQ_INT(s.steps[0].key, 0x14);
+    CHECK_EQ_INT(s.steps[0].mod, HID_MOD_RALT);
+    s = resolve(&keymap_esla, 0x00BF, &r); /* ¿ */
+    CHECK_EQ_INT(s.steps[0].key, HID_KEY_EQUAL);
+    CHECK_EQ_INT(s.steps[0].mod, HID_MOD_NONE);
+    s = resolve(&keymap_esla, 0x00F1, &r); /* ñ */
+    CHECK_EQ_INT(s.steps[0].key, HID_KEY_SEMICOLON);
+
+    /* French AZERTY: letters move (a<->q, z<->w, m), digits need Shift,
+     * and the common accents are direct keys on the digit row. */
+    CHECK(keymap_by_name("fr") == &keymap_fr);
+    s = resolve(&keymap_fr, 'a', &r);
+    CHECK_EQ_INT(s.steps[0].key, 0x14); /* the physical Q key */
+    s = resolve(&keymap_fr, 'q', &r);
+    CHECK_EQ_INT(s.steps[0].key, HID_KEY_A);
+    s = resolve(&keymap_fr, 'm', &r);
+    CHECK_EQ_INT(s.steps[0].key, HID_KEY_SEMICOLON);
+    s = resolve(&keymap_fr, '1', &r);
+    CHECK_EQ_INT(s.steps[0].mod, HID_MOD_LSHIFT);
+    s = resolve(&keymap_fr, 0x00E9, &r); /* é: direct, digit row */
+    CHECK_EQ_INT(s.n, 1);
+    CHECK_EQ_INT(s.steps[0].key, 0x1F);
+    CHECK_EQ_INT(s.steps[0].mod, HID_MOD_NONE);
+    s = resolve(&keymap_fr, 0x00EA, &r); /* ê: dead ^ then e */
+    CHECK_EQ_INT(s.n, 2);
+    CHECK_EQ_INT(s.steps[0].key, HID_KEY_LBRACKET);
+    CHECK_EQ_INT(s.steps[1].key, 0x08);
+    /* Legacy AZERTY cannot type Ç; the ladder de-accents it to C. */
+    s = resolve(&keymap_fr, 0x00C7, &r);
+    CHECK_EQ_INT(r, KEYMAP_DEACCENTED);
+    CHECK_EQ_INT(s.steps[0].key, 0x06);
+    CHECK_EQ_INT(s.steps[0].mod, HID_MOD_LSHIFT);
+
+    /* German QWERTZ: y and z swap; umlauts and ß are direct keys. */
+    CHECK(keymap_by_name("de") == &keymap_de);
+    s = resolve(&keymap_de, 'z', &r);
+    CHECK_EQ_INT(s.steps[0].key, 0x1C); /* the physical Y key */
+    s = resolve(&keymap_de, 'y', &r);
+    CHECK_EQ_INT(s.steps[0].key, 0x1D);
+    s = resolve(&keymap_de, 0x00FC, &r); /* ü */
+    CHECK_EQ_INT(s.steps[0].key, HID_KEY_LBRACKET);
+    s = resolve(&keymap_de, 0x00DF, &r); /* ß */
+    CHECK_EQ_INT(s.n, 1);
+    CHECK_EQ_INT(s.steps[0].key, HID_KEY_MINUS);
+    CHECK_EQ_INT(s.steps[0].mod, HID_MOD_NONE);
+    s = resolve(&keymap_de, '@', &r);
+    CHECK_EQ_INT(s.steps[0].key, 0x14);
+    CHECK_EQ_INT(s.steps[0].mod, HID_MOD_RALT);
+
+    /* Italian: accented vowels are direct keys; ` and ~ do not exist. */
+    CHECK(keymap_by_name("it") == &keymap_it);
+    s = resolve(&keymap_it, 0x00E8, &r); /* è */
+    CHECK_EQ_INT(s.n, 1);
+    CHECK_EQ_INT(s.steps[0].key, HID_KEY_LBRACKET);
+    CHECK_EQ_INT(s.steps[0].mod, HID_MOD_NONE);
+    s = resolve(&keymap_it, 0x00E9, &r); /* é */
+    CHECK_EQ_INT(s.steps[0].mod, HID_MOD_LSHIFT);
+    s = resolve(&keymap_it, 0x00E0, &r); /* à */
+    CHECK_EQ_INT(s.steps[0].key, HID_KEY_APOSTROPHE);
+    s = resolve(&keymap_it, '`', &r);
+    CHECK_EQ_INT(r, KEYMAP_SKIPPED);
+    s = resolve(&keymap_it, '~', &r);
+    CHECK_EQ_INT(r, KEYMAP_SKIPPED);
 })
