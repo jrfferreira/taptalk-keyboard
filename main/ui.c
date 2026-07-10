@@ -77,7 +77,7 @@ static ui_model_t s_model;
 static SemaphoreHandle_t s_lock;
 
 static lv_obj_t *s_main, *s_setup;
-static lv_obj_t *s_btn, *s_mic, *s_timer, *s_status;
+static lv_obj_t *s_btn, *s_mic, *s_timer, *s_spinner, *s_status;
 static lv_obj_t *s_ico_usb, *s_ico_wifi, *s_badge, *s_badge_hit;
 static lv_obj_t *s_sheet, *s_sheet_text;
 static lv_obj_t *s_spec[SPEC_BARS];
@@ -156,21 +156,38 @@ static void ui_tick(lv_timer_t *timer)
     static char last_msg[sizeof(m.msg)] = {1};
 
     const bool rec = (m.state == ST_RECORDING);
+    const bool busy = (m.state == ST_UPLOADING || m.state == ST_TYPING);
+
     if ((int)rec != last_rec) {
         last_rec = rec;
         /* Swap the whole depth-shaded disc: green idle, red recording. */
         lv_obj_set_style_bg_image_src(s_btn, rec ? &btn_rec : &btn_idle, LV_PART_MAIN);
-        /* The mic and the timer trade places: the mic says "press me", the
-         * running clock says "I am listening". Showing both at once was the old
-         * bug -- the mic's foot bar sat exactly where the timer drew, so the
-         * timer looked absent. */
-        if (rec) {
+    }
+
+    /* The centre of the button shows exactly one thing at a time: the mic says
+     * "press me", the running clock says "I am listening", the spinner says
+     * "working on it". Showing two at once was the old bug -- the mic's foot
+     * bar sat exactly where the timer drew, so the timer looked absent. */
+    enum { CENTRE_MIC, CENTRE_TIMER, CENTRE_SPINNER };
+    static int last_centre = -1;
+    const int centre = rec ? CENTRE_TIMER : (busy ? CENTRE_SPINNER : CENTRE_MIC);
+    if (centre != last_centre) {
+        last_centre = centre;
+        if (centre == CENTRE_MIC) {
+            lv_obj_remove_flag(s_mic, LV_OBJ_FLAG_HIDDEN);
+        } else {
             lv_obj_add_flag(s_mic, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (centre == CENTRE_TIMER) {
             lv_obj_remove_flag(s_timer, LV_OBJ_FLAG_HIDDEN);
         } else {
-            lv_obj_remove_flag(s_mic, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(s_timer, LV_OBJ_FLAG_HIDDEN);
             last_timer_tenths = UINT32_MAX;
+        }
+        if (centre == CENTRE_SPINNER) {
+            lv_obj_remove_flag(s_spinner, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_spinner, LV_OBJ_FLAG_HIDDEN);
         }
     }
 
@@ -179,7 +196,6 @@ static void ui_tick(lv_timer_t *timer)
      * Dim it and drop LV_OBJ_FLAG_CLICKABLE so it neither reacts nor lights up
      * until the transcript has landed. */
     static int last_busy = -1;
-    const bool busy = (m.state == ST_UPLOADING || m.state == ST_TYPING);
     if ((int)busy != last_busy) {
         last_busy = busy;
         lv_obj_set_style_opa(s_btn, busy ? LV_OPA_40 : LV_OPA_COVER, LV_PART_MAIN);
@@ -423,6 +439,26 @@ static void build_main(void)
     lv_obj_set_style_text_opa(s_timer, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_center(s_timer);
     lv_obj_add_flag(s_timer, LV_OBJ_FLAG_HIDDEN);
+
+    /* The spinner takes the mic's place while a clip is transcribing or being
+     * typed. It is a child of the screen, not the button, on purpose: busy
+     * also dims the whole button to 40%, and a child would be dragged down
+     * with it. Kept outside, the disc reads "inert" while the arc spins at
+     * full strength and reads "working". White, like the timer -- the two
+     * "something is happening" signals share a colour. */
+    s_spinner = lv_spinner_create(s_main);
+    lv_spinner_set_anim_params(s_spinner, 1000, 200);
+    lv_obj_set_size(s_spinner, 96, 96);
+    lv_obj_align(s_spinner, LV_ALIGN_CENTER, 0, -8); /* concentric with the button */
+    lv_obj_set_style_arc_width(s_spinner, 10, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(s_spinner, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(s_spinner, LV_OPA_20, LV_PART_MAIN); /* faint track */
+    lv_obj_set_style_arc_width(s_spinner, 10, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(s_spinner, lv_color_white(), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_opa(s_spinner, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(s_spinner, true, LV_PART_INDICATOR);
+    lv_obj_remove_flag(s_spinner, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_spinner, LV_OBJ_FLAG_HIDDEN);
 
     /* ---- four corners, Apple Watch style ----
      * The panel's corners are rounded, so these are inset diagonally rather
