@@ -1,6 +1,7 @@
 #include "app_sm.h"
 
 #include "audio_capture.h"
+#include "beeper.h"
 #include "hid_kbd.h"
 #include "stt_client.h"
 #include "config_store.h"
@@ -122,12 +123,14 @@ static void run_actions(uint32_t actions)
         audio_clip_discard();
     }
     if (actions & ACT_HINT_NOT_READY) {
+        beeper_play(BEEP_ERROR);
         ui_set_error(!s_usb                      ? "Not plugged into a computer"
                    : !s_wifi_up                  ? "Wi-Fi not connected"
                    : !config_has_api_key(&s_cfg) ? "No API key - tap Setup"
                                                  : "Clock not synced");
     }
     if (actions & ACT_SHOW_ERROR) {
+        beeper_play(BEEP_ERROR);
         /* Prefer the real reason over a generic one. */
         ui_set_error(!config_is_provisioned(&s_cfg) ? "Not configured - tap Setup"
                    : stt_error()[0] != '\0'      ? stt_error()
