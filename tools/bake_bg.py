@@ -14,7 +14,9 @@ no per-chunk recompute, no malloc.
 """
 import sys
 
-W, H = 368, 448
+import os
+W = int(os.environ.get('BG_W', 368))
+H = int(os.environ.get('BG_H', 448))
 
 # The same four stops as the old runtime gradient (C_BG_0..3), as (frac, rgb).
 STOPS = [
@@ -45,10 +47,31 @@ def to565(r, g, b):
     return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
 
 
+# The mint halo that pools at the bottom-centre of the screen, the same accent
+# the button and the web mockup use. Additive and soft, so it lifts the dark
+# gradient without competing with the button sitting above it.
+HALO_RGB = (0x3D, 0xDC, 0x97)
+HALO_INTENSITY = 0.30    # peak green added, 0..1
+HALO_CX = 0.5            # centre, as a fraction of width
+HALO_CY = 1.02           # just below the bottom edge, so only the top of the glow shows
+HALO_RX = 0.62           # radii as a fraction of width/height
+HALO_RY = 0.42
+
+
+def with_halo(x, y, base):
+    dx = (x - HALO_CX * W) / (HALO_RX * W)
+    dy = (y - HALO_CY * H) / (HALO_RY * H)
+    d2 = dx * dx + dy * dy
+    if d2 >= 1.0:
+        return base
+    g = HALO_INTENSITY * (1.0 - d2) ** 2  # smooth falloff to the rim
+    return [min(255.0, base[c] + HALO_RGB[c] * g) for c in range(3)]
+
+
 def bake():
     # Float image, then Floyd-Steinberg dither to the RGB565 grid. The error
     # diffusion is what replaces hard bands with imperceptible pixel noise.
-    img = [[list(gradient_row(y)) for _ in range(W)] for y in range(H)]
+    img = [[with_halo(x, y, list(gradient_row(y))) for x in range(W)] for y in range(H)]
     LEVELS = (32, 64, 32)  # 5/6/5 bits
 
     def quant(v, levels):
