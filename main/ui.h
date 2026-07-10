@@ -17,7 +17,12 @@
 esp_err_t ui_init(void);
 
 void ui_set_state(app_state_t state);
-void ui_set_level(int percent);     /* live mic level, 0..100; drives the wave */
+void ui_set_level(int percent);     /* live mic level, 0..100 */
+
+/* AUDIO_SPECTRUM_BANDS values, 0..100, from the FFT. Drives the full-width
+ * spectrum analyser that rises from the bottom of the screen. */
+void ui_set_spectrum(const uint8_t *bands);
+
 void ui_set_clip(uint32_t ms, int peak);
 void ui_set_wifi(bool connected);
 void ui_set_usb(bool connected);

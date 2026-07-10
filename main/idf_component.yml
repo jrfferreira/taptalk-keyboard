@@ -17,3 +17,7 @@ dependencies:
   # USB-Serial-JTAG controller, which is why the console moves to the CDC
   # interface and why reflashing then needs BOOT held while PWR is tapped.
   espressif/esp_tinyusb: "^2.2"
+
+  # FFT for the on-screen spectrum analyser. dsps_fft2r_fc32 on a 256-point
+  # window per audio chunk, grouped into log-spaced bands.
+  espressif/esp-dsp: "^1.5"

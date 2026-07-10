@@ -102,7 +102,7 @@ static void run_actions(uint32_t actions)
     if (actions & ACT_UPLOAD_START) {
         size_t total = 0;
         const uint8_t *wav = audio_clip_wav(&total);
-        ui_set_status("Transcribing\u2026");
+        ui_set_status("Transcribing...");
         if (stt_start(s_cfg.api_key, wav, total) != ESP_OK) {
             ui_set_error(stt_error());
             app_sm_post(EV_STT_FAIL);
@@ -112,7 +112,7 @@ static void run_actions(uint32_t actions)
         stt_abort();
     }
     if (actions & ACT_TYPE_START) {
-        ui_set_status("Typing\u2026");
+        ui_set_status("Typing...");
         if (hid_kbd_type(stt_transcript()) != ESP_OK) {
             app_sm_post(EV_TYPE_ABORT);
         }

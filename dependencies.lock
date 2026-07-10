@@ -10,6 +10,17 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 0.5.3
+  espressif/esp-dsp:
+    component_hash: 
+      ed9ac175b14e0414399a2b33c525579414b5bad19a2a67b12ea212def96f9a98
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.2'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.8.2
   espressif/esp_codec_dev:
     component_hash: 
       df70f10af8d7b922add7b9d07372c9c97ab356e58d72b7a892050227c2d44348
@@ -214,9 +225,10 @@ dependencies:
       type: service
     version: 2.0.0
 direct_dependencies:
+- espressif/esp-dsp
 - espressif/esp_tinyusb
 - idf
 - waveshare/esp32_s3_touch_amoled_1_8
-manifest_hash: b7334d2ff7d84a8278738e2127800468296f8b3b1ac434f18676f3b00ef6250e
+manifest_hash: 427c6c5d285c0c26d00abbb50ac8443e2ae9b486d100ad541aa3c3cb7cf88b12
 target: esp32s3
 version: 2.0.0

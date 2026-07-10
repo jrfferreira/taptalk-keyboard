@@ -15,13 +15,23 @@
 #define AUDIO_SAMPLE_RATE 16000
 #define AUDIO_BITS        16
 #define AUDIO_CHANNELS    1
-#define AUDIO_MAX_SECONDS 30
+/* The clip is one fixed PSRAM buffer, so there is still a ceiling -- but at
+ * 32 KB/s a two-minute cap is 3.84 MB of the 8 MB PSRAM, leaving ~4 MB for
+ * everything else, and two minutes of continuous dictation is long enough that
+ * it should never be reached in practice. Raising this further is just a bigger
+ * malloc, until PSRAM runs out. */
+#define AUDIO_MAX_SECONDS 120
 #define AUDIO_MAX_PCM_BYTES ((size_t)AUDIO_MAX_SECONDS * AUDIO_SAMPLE_RATE * (AUDIO_BITS / 8) * AUDIO_CHANNELS)
 
 /* A clip shorter than this is an accidental tap, not speech. There is no
  * peak/volume gate: a deliberate hold uploads even if quiet, and true silence
  * returns empty text from the backend rather than being dropped locally. */
 #define AUDIO_MIN_CLIP_MS   300
+
+/* The on-screen spectrum analyser: this many log-spaced frequency bands, each
+ * 0..100, computed by a 256-point FFT of every audio chunk and pushed to the UI
+ * via ui_set_spectrum(). */
+#define AUDIO_SPECTRUM_BANDS 28
 
 /* Allocates the PSRAM clip, brings up I2S at 16 kHz, opens the codec, and
  * spawns the capture task. Must run after pmic_init(). */

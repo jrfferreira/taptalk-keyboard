@@ -4,8 +4,10 @@
 #include <string.h>
 
 #include "app_sm.h"
+#include "audio_capture.h"
 #include "assets/bg_main.h"
 #include "assets/btn_mic.h"
+#include "assets/ic_mic.h"
 #include "beeper.h"
 #include "diagnostics.h"
 #include "bsp/esp-bsp.h"
@@ -24,14 +26,14 @@ static const char *TAG = "ui";
 
 /* Panel is 368x448. */
 #define BTN_D 228
-/* The level meter, bottom-left. Taller and wider bars than before, with a
- * higher opacity floor, so it reads clearly as live audio during recording
- * rather than a faint flicker. */
-#define WAVE_BARS 14
-#define WAVE_BAR_W 4
-#define WAVE_BAR_GAP 5
-#define WAVE_H 54
-#define WAVE_MIN 5
+/* The spectrum analyser: full-width bars rising from the bottom edge, low
+ * opacity, behind the button -- the sound "coming up from the floor" of the
+ * screen. One bar per FFT band. Sized for the 448 px landscape width. */
+#define SPEC_BARS  AUDIO_SPECTRUM_BANDS
+#define SPEC_BAR_W 10
+#define SPEC_STEP  16   /* bar pitch; SPEC_BARS * SPEC_STEP ~ screen width */
+#define SPEC_H     150  /* max bar height */
+#define SPEC_MIN   0  /* zero at silence: no dashes along the bottom */
 #define ICON_HIT 72   /* transparent touch target; the glyph is smaller than the tap */
 #define EDGE 16       /* inset from the rounded corners of the panel */
 
@@ -63,6 +65,7 @@ static const char *TAG = "ui";
 typedef struct {
     app_state_t state;
     int level;
+    uint8_t spectrum[SPEC_BARS];
     uint32_t clip_ms;
     bool wifi;
     bool usb;
@@ -77,11 +80,11 @@ static lv_obj_t *s_main, *s_setup;
 static lv_obj_t *s_btn, *s_mic, *s_timer, *s_status;
 static lv_obj_t *s_ico_usb, *s_ico_wifi, *s_badge, *s_badge_hit;
 static lv_obj_t *s_sheet, *s_sheet_text;
-static lv_obj_t *s_wave[WAVE_BARS];
+static lv_obj_t *s_spec[SPEC_BARS];
 
-/* Rolling level history, oldest first. Shifting it each tick is what makes
- * the bars travel instead of just pulsing in place. */
-static uint8_t s_hist[WAVE_BARS];
+/* Smoothed on-screen bar heights (fast attack, slow decay). Touched only in the
+ * LVGL tick, so no lock; the raw FFT targets live in the model. */
+static uint8_t s_spec_shown[SPEC_BARS];
 
 static void model_lock(void) { xSemaphoreTake(s_lock, portMAX_DELAY); }
 static void model_unlock(void) { xSemaphoreGive(s_lock); }
@@ -95,6 +98,13 @@ static void model_unlock(void) { xSemaphoreGive(s_lock); }
 
 void ui_set_state(app_state_t state) { MODEL_SET(state, state); }
 void ui_set_level(int percent) { MODEL_SET(level, percent < 0 ? 0 : (percent > 100 ? 100 : percent)); }
+
+void ui_set_spectrum(const uint8_t *bands)
+{
+    model_lock();
+    memcpy(s_model.spectrum, bands, SPEC_BARS);
+    model_unlock();
+}
 void ui_set_wifi(bool connected) { MODEL_SET(wifi, connected); }
 void ui_set_usb(bool connected) { MODEL_SET(usb, connected); }
 
@@ -192,18 +202,19 @@ static void ui_tick(lv_timer_t *timer)
         }
     }
 
-    /* Scroll the history one step and append the newest level. */
-    memmove(s_hist, s_hist + 1, WAVE_BARS - 1);
-    s_hist[WAVE_BARS - 1] = (uint8_t)m.level;
-
-    for (int i = 0; i < WAVE_BARS; i++) {
-        const int h = WAVE_MIN + (s_hist[i] * (WAVE_H - WAVE_MIN)) / 100;
-        if (lv_obj_get_height(s_wave[i]) != h) {
-            lv_obj_set_height(s_wave[i], h);
-            /* Higher opacity floor (110, not 70) so even quiet bars are clearly
-             * lit -- the meter should look alive, not almost-off. */
-            lv_obj_set_style_bg_opa(s_wave[i], (lv_opa_t)(110 + (s_hist[i] * 145) / 100),
-                                    LV_PART_MAIN);
+    /* Spectrum: each bar chases its FFT band. Fast attack, slow decay -- it
+     * snaps up to a transient and eases back down, which is what makes an
+     * analyser read as one. m.spectrum holds the latest FFT frame. */
+    for (int i = 0; i < SPEC_BARS; i++) {
+        const uint8_t tgt = m.spectrum[i];
+        if (tgt >= s_spec_shown[i]) {
+            s_spec_shown[i] = tgt;                       /* attack: jump up */
+        } else {
+            s_spec_shown[i] -= (s_spec_shown[i] - tgt) / 3 + 1; /* decay: ease down */
+        }
+        const int h = SPEC_MIN + (s_spec_shown[i] * (SPEC_H - SPEC_MIN)) / 100;
+        if (lv_obj_get_height(s_spec[i]) != h) {
+            lv_obj_set_height(s_spec[i], h);
         }
     }
 
@@ -337,65 +348,18 @@ static void build_sheet(void)
     lv_obj_center(okl);
 }
 
-/* A microphone icon from primitives. Sized in a MIC_* box centred in the
- * button; INK-coloured so it reads on both the green idle and red recording
- * gradients. lv_arc draws the cradle -- no box-shadow, no big fill. */
-#define MIC_BODY_W 30
-#define MIC_BODY_H 56
-#define MIC_CRADLE 88
-
+/* The microphone is a baked, anti-aliased A8 mask (tools/bake_mic.py), recoloured
+ * to INK so the one image reads on both the green idle and red recording discs.
+ * The four-primitive version it replaces looked hand-drawn; this has smooth
+ * edges and no per-part alignment to drift. */
 static void build_mic(lv_obj_t *btn)
 {
-    /* A transparent container filling the button, so the whole icon can be
-     * hidden in one call when recording swaps it for the timer. */
-    s_mic = lv_obj_create(btn);
-    lv_obj_remove_style_all(s_mic);
-    lv_obj_set_size(s_mic, BTN_D, BTN_D);
-    lv_obj_center(s_mic);
-    lv_obj_remove_flag(s_mic, LV_OBJ_FLAG_CLICKABLE); /* the button underneath handles touch */
-    lv_obj_t *parent = s_mic;
-
-    /* Body: a capsule. radius >= half-width rounds the ends fully. */
-    lv_obj_t *body = lv_obj_create(parent);
-    lv_obj_remove_style_all(body);
-    lv_obj_set_size(body, MIC_BODY_W, MIC_BODY_H);
-    lv_obj_align(body, LV_ALIGN_CENTER, 0, -30);
-    lv_obj_set_style_radius(body, MIC_BODY_W / 2, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(body, lv_color_hex(C_INK), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(body, LV_OPA_COVER, LV_PART_MAIN);
-
-    /* Cradle: the U beneath the body. An arc from 30 to 150 degrees (LVGL 0 deg
-     * is 3 o'clock, 90 is 6 o'clock), knob and indicator stripped so only the
-     * background arc draws. */
-    lv_obj_t *cradle = lv_arc_create(parent);
-    lv_obj_remove_style(cradle, NULL, LV_PART_KNOB);
-    lv_obj_set_size(cradle, MIC_CRADLE, MIC_CRADLE);
-    lv_obj_align(cradle, LV_ALIGN_CENTER, 0, -18);
-    lv_arc_set_bg_angles(cradle, 30, 150);
-    lv_arc_set_value(cradle, 0);
-    lv_obj_set_style_arc_width(cradle, 5, LV_PART_MAIN);
-    lv_obj_set_style_arc_color(cradle, lv_color_hex(C_INK), LV_PART_MAIN);
-    lv_obj_set_style_arc_rounded(cradle, true, LV_PART_MAIN);
-    lv_obj_set_style_arc_opa(cradle, LV_OPA_TRANSP, LV_PART_INDICATOR);
-    lv_obj_remove_flag(cradle, LV_OBJ_FLAG_CLICKABLE);
-
-    /* Stem: a short bar from the cradle down to the base. */
-    lv_obj_t *stem = lv_obj_create(parent);
-    lv_obj_remove_style_all(stem);
-    lv_obj_set_size(stem, 5, 14);
-    lv_obj_align(stem, LV_ALIGN_CENTER, 0, 26);
-    lv_obj_set_style_radius(stem, 2, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(stem, lv_color_hex(C_INK), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(stem, LV_OPA_COVER, LV_PART_MAIN);
-
-    /* Base: a short foot bar under the stem. */
-    lv_obj_t *base = lv_obj_create(parent);
-    lv_obj_remove_style_all(base);
-    lv_obj_set_size(base, 34, 5);
-    lv_obj_align(base, LV_ALIGN_CENTER, 0, 34);
-    lv_obj_set_style_radius(base, 2, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(base, lv_color_hex(C_INK), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(base, LV_OPA_COVER, LV_PART_MAIN);
+    s_mic = lv_image_create(btn);
+    lv_image_set_src(s_mic, &ic_mic);
+    lv_obj_set_style_image_recolor(s_mic, lv_color_hex(C_INK), LV_PART_MAIN);
+    lv_obj_set_style_image_recolor_opa(s_mic, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_align(s_mic, LV_ALIGN_CENTER, 0, -6);
+    lv_obj_remove_flag(s_mic, LV_OBJ_FLAG_CLICKABLE); /* the button handles touch */
 }
 
 static void build_main(void)
@@ -474,22 +438,29 @@ static void build_main(void)
     lv_obj_set_style_text_font(s_ico_wifi, FONT_BIG, LV_PART_MAIN);
     lv_obj_align(s_ico_wifi, LV_ALIGN_TOP_RIGHT, -(EDGE + 20), EDGE + 12);
 
-    /* Bottom-left: the level meter, as a compact complication. */
-    lv_obj_t *wave = lv_obj_create(s_main);
-    lv_obj_remove_style_all(wave);
-    lv_obj_set_size(wave, WAVE_BARS * (WAVE_BAR_W + WAVE_BAR_GAP), WAVE_H);
-    lv_obj_align(wave, LV_ALIGN_BOTTOM_LEFT, EDGE + 12, -(EDGE + 14));
-    lv_obj_remove_flag(wave, LV_OBJ_FLAG_SCROLLABLE);
-    for (int i = 0; i < WAVE_BARS; i++) {
-        lv_obj_t *b = lv_obj_create(wave);
+    /* The spectrum analyser: one bar per FFT band, spanning the full width and
+     * anchored to the bottom edge so the bars rise from the floor of the screen.
+     * Low opacity, and moved behind the button so it reads as ambient rather
+     * than a widget competing with the mic. */
+    const int total = SPEC_BARS * SPEC_STEP;
+    lv_obj_t *spec = lv_obj_create(s_main);
+    lv_obj_remove_style_all(spec);
+    lv_obj_set_size(spec, total, SPEC_H);
+    lv_obj_align(spec, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_remove_flag(spec, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(spec, LV_OBJ_FLAG_CLICKABLE);
+    for (int i = 0; i < SPEC_BARS; i++) {
+        lv_obj_t *b = lv_obj_create(spec);
         lv_obj_remove_style_all(b);
-        lv_obj_set_size(b, WAVE_BAR_W, WAVE_MIN);
-        lv_obj_align(b, LV_ALIGN_LEFT_MID, i * (WAVE_BAR_W + WAVE_BAR_GAP), 0);
-        lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+        lv_obj_set_size(b, SPEC_BAR_W, SPEC_MIN);
+        /* Anchored bottom so growing the height makes the bar climb upward. */
+        lv_obj_align(b, LV_ALIGN_BOTTOM_LEFT, i * SPEC_STEP, 0);
+        lv_obj_set_style_radius(b, 3, LV_PART_MAIN);
         lv_obj_set_style_bg_color(b, lv_color_hex(C_ON), LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(b, LV_OPA_70, LV_PART_MAIN);
-        s_wave[i] = b;
+        lv_obj_set_style_bg_opa(b, LV_OPA_20, LV_PART_MAIN); /* ambient, not loud */
+        s_spec[i] = b;
     }
+    lv_obj_move_background(spec); /* behind the button and the mic */
 
     /* Bottom-right: setup. A 72 px transparent tap target around a 28 px cog,
      * because a fingertip is about 9 mm and the glyph is 3. */
@@ -505,10 +476,15 @@ static void build_main(void)
     lv_obj_set_style_text_color(cog, lv_color_hex(C_COG), LV_PART_MAIN);
     lv_obj_center(cog);
 
-    /* ---- transient status, and the error badge ---- */
+    /* ---- transient status, and the error badge ----
+     * Status ("Transcribing...", "Typing...") sits on the left, vertically
+     * centred so multi-line text stacks around the middle rather than climbing
+     * from the bottom. The button holds the other side. */
     s_status = lv_label_create(s_main);
     lv_obj_set_style_text_color(s_status, lv_color_hex(C_STATUS), LV_PART_MAIN);
-    lv_obj_align(s_status, LV_ALIGN_CENTER, 0, 128);
+    lv_obj_set_width(s_status, 150);
+    lv_obj_set_style_text_align(s_status, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+    lv_obj_align(s_status, LV_ALIGN_LEFT_MID, EDGE, 0);
     lv_obj_add_flag(s_status, LV_OBJ_FLAG_HIDDEN);
 
     s_badge_hit = lv_obj_create(s_main);
