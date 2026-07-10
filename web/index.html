@@ -204,15 +204,20 @@
     /* Show the finished sentence rather than an empty box. */
     .typed { width: 16ch; border-right-color: transparent; }
   }
+  /* Each bar breathes around its own centre (fill-box, or scaleY would pivot on
+     the SVG origin and shove the bars off the midline). The heights in the markup
+     carry the wave shape; this only ripples them. */
+  .lvl {
+    transform-box: fill-box; transform-origin: 50% 50%;
+    animation: lvl 1.1s ease-in-out infinite;
+  }
   .lvl:nth-of-type(7n+1) { animation-delay: 0s }    .lvl:nth-of-type(7n+2) { animation-delay: .15s }
   .lvl:nth-of-type(7n+3) { animation-delay: .3s }   .lvl:nth-of-type(7n+4) { animation-delay: .05s }
   .lvl:nth-of-type(7n+5) { animation-delay: .25s }  .lvl:nth-of-type(7n+6) { animation-delay: .4s }
   .lvl:nth-of-type(7n+7) { animation-delay: .1s }
-  @keyframes lvl { 0%,100% { transform: scaleY(.3) } 50% { transform: scaleY(1) } }
+  @keyframes lvl { 0%,100% { transform: scaleY(.55) } 50% { transform: scaleY(1) } }
 
   @media (prefers-reduced-motion: reduce) {
-    .pulse, .lvl, .eyebrow .dot { animation: none; }
-    .pulse { opacity: .25 }
     html { scroll-behavior: auto; }
   }
 
@@ -445,22 +450,24 @@
         <rect x="-2.5" y="17" width="5" height="10" rx="2"/>
       </g>
 
-      <!-- bottom-left: the live waveform -->
+      <!-- bottom-left: the live waveform. Bar heights sketch a speech envelope
+           (two syllable humps), each centred on the midline; the CSS only
+           breathes them, so the silhouette reads as a wave even standing still. -->
       <g transform="translate(48 386)"><g class="wave-group">
-        <rect class="lvl" x="0" y="-19" width="3" height="38" rx="1.5" fill="#3ddc97"/>
-        <rect class="lvl" x="7" y="-19" width="3" height="38" rx="1.5" fill="#3ddc97"/>
-        <rect class="lvl" x="14" y="-19" width="3" height="38" rx="1.5" fill="#3ddc97"/>
+        <rect class="lvl" x="0"  y="-4"  width="3" height="8"  rx="1.5" fill="#3ddc97"/>
+        <rect class="lvl" x="7"  y="-8"  width="3" height="16" rx="1.5" fill="#3ddc97"/>
+        <rect class="lvl" x="14" y="-13" width="3" height="26" rx="1.5" fill="#3ddc97"/>
         <rect class="lvl" x="21" y="-19" width="3" height="38" rx="1.5" fill="#3ddc97"/>
-        <rect class="lvl" x="28" y="-19" width="3" height="38" rx="1.5" fill="#3ddc97"/>
-        <rect class="lvl" x="35" y="-19" width="3" height="38" rx="1.5" fill="#3ddc97"/>
-        <rect class="lvl" x="42" y="-19" width="3" height="38" rx="1.5" fill="#3ddc97"/>
-        <rect class="lvl" x="49" y="-19" width="3" height="38" rx="1.5" fill="#3ddc97"/>
+        <rect class="lvl" x="28" y="-14" width="3" height="28" rx="1.5" fill="#3ddc97"/>
+        <rect class="lvl" x="35" y="-8"  width="3" height="16" rx="1.5" fill="#3ddc97"/>
+        <rect class="lvl" x="42" y="-11" width="3" height="22" rx="1.5" fill="#3ddc97"/>
+        <rect class="lvl" x="49" y="-17" width="3" height="34" rx="1.5" fill="#3ddc97"/>
         <rect class="lvl" x="56" y="-19" width="3" height="38" rx="1.5" fill="#3ddc97"/>
-        <rect class="lvl" x="63" y="-19" width="3" height="38" rx="1.5" fill="#3ddc97"/>
-        <rect class="lvl" x="70" y="-19" width="3" height="38" rx="1.5" fill="#3ddc97"/>
-        <rect class="lvl" x="77" y="-19" width="3" height="38" rx="1.5" fill="#3ddc97"/>
-        <rect class="lvl" x="84" y="-19" width="3" height="38" rx="1.5" fill="#3ddc97"/>
-        <rect class="lvl" x="91" y="-19" width="3" height="38" rx="1.5" fill="#3ddc97"/>
+        <rect class="lvl" x="63" y="-12" width="3" height="24" rx="1.5" fill="#3ddc97"/>
+        <rect class="lvl" x="70" y="-7"  width="3" height="14" rx="1.5" fill="#3ddc97"/>
+        <rect class="lvl" x="77" y="-10" width="3" height="20" rx="1.5" fill="#3ddc97"/>
+        <rect class="lvl" x="84" y="-6"  width="3" height="12" rx="1.5" fill="#3ddc97"/>
+        <rect class="lvl" x="91" y="-3"  width="3" height="6"  rx="1.5" fill="#3ddc97"/>
       </g></g>
 
       <!-- bottom-right: settings -->
