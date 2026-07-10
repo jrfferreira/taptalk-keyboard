@@ -69,7 +69,7 @@ static void run_actions(uint32_t actions)
             }
             app_sm_post(EV_PMIC_OK);
         } else {
-            ui_set_msg("PMIC not found");
+            ui_set_error("PMIC not found");
             app_sm_post(EV_PMIC_FAIL);
         }
     }
@@ -78,7 +78,7 @@ static void run_actions(uint32_t actions)
         if (provisioning_start(&info) == ESP_OK) {
             ui_show_setup(&info);
         } else {
-            ui_set_msg("Setup AP failed");
+            ui_set_error("Setup AP failed");
         }
     }
     if (actions & (ACT_WIFI_START | ACT_WIFI_RETRY)) {
@@ -90,7 +90,8 @@ static void run_actions(uint32_t actions)
         net_sntp_start();
     }
     if (actions & ACT_REC_START) {
-        ui_set_msg("");
+        /* A new recording clears whatever went wrong last time. */
+        ui_clear_msg();
         audio_record_begin();
     }
     if (actions & ACT_REC_STOP) {
@@ -99,9 +100,9 @@ static void run_actions(uint32_t actions)
     if (actions & ACT_UPLOAD_START) {
         size_t total = 0;
         const uint8_t *wav = audio_clip_wav(&total);
-        ui_set_msg("Transcribing\u2026");
+        ui_set_status("Transcribing\u2026");
         if (stt_start(s_cfg.api_key, wav, total) != ESP_OK) {
-            ui_set_msg(stt_error());
+            ui_set_error(stt_error());
             app_sm_post(EV_STT_FAIL);
         }
     }
@@ -109,7 +110,7 @@ static void run_actions(uint32_t actions)
         stt_abort();
     }
     if (actions & ACT_TYPE_START) {
-        ui_set_msg("Typing\u2026");
+        ui_set_status("Typing\u2026");
         if (hid_kbd_type(stt_transcript()) != ESP_OK) {
             app_sm_post(EV_TYPE_ABORT);
         }
@@ -121,14 +122,14 @@ static void run_actions(uint32_t actions)
         audio_clip_discard();
     }
     if (actions & ACT_HINT_NOT_READY) {
-        ui_set_msg(!s_usb                        ? "Not plugged into a computer"
+        ui_set_error(!s_usb                      ? "Not plugged into a computer"
                    : !s_wifi_up                  ? "Wi-Fi not connected"
                    : !config_has_api_key(&s_cfg) ? "No API key - tap Setup"
                                                  : "Clock not synced");
     }
     if (actions & ACT_SHOW_ERROR) {
         /* Prefer the real reason over a generic one. */
-        ui_set_msg(!config_is_provisioned(&s_cfg) ? "Not configured - tap Setup"
+        ui_set_error(!config_is_provisioned(&s_cfg) ? "Not configured - tap Setup"
                    : stt_error()[0] != '\0'      ? stt_error()
                                                  : "Error - tap Setup or wait");
     }
@@ -195,6 +196,16 @@ static void sm_task(void *arg)
 
         s_state = out.next;
         ui_set_state(s_state);
+
+        /* Outcomes the action mask cannot express: a finished burst should
+         * clear "Typing…", and a silent clip deserves to say so rather than
+         * look like nothing happened. */
+        if (ev == EV_TYPE_DONE) {
+            ui_clear_msg();
+        } else if (ev == EV_STT_EMPTY) {
+            ui_set_status("No speech detected");
+        }
+
         run_actions(out.actions);
     }
 }

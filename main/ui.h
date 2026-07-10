@@ -21,7 +21,18 @@ void ui_set_level(int percent);     /* live mic level, 0..100; drives the wave *
 void ui_set_clip(uint32_t ms, int peak);
 void ui_set_wifi(bool connected);
 void ui_set_usb(bool connected);
-void ui_set_msg(const char *msg);   /* "" hides it */
+
+/* Transient, low-stakes: "Transcribing…", "Typing…". Dim text, no badge. */
+void ui_set_status(const char *text);
+
+/* Something went wrong and the user needs to be able to read it. Raises a
+ * warning badge; tapping the badge shows the full text, which is where a
+ * message like "Rate limited or out of credit" actually earns its keep. The
+ * badge stays until the next recording starts, so an error cannot flash past
+ * while you are looking away. */
+void ui_set_error(const char *text);
+
+void ui_clear_msg(void);
 
 /* Swaps to the setup screen and shows how to reach the portal. */
 void ui_show_setup(const prov_info_t *info);

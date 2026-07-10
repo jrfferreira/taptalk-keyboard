@@ -95,7 +95,7 @@ void app_main(void)
     const esp_err_t err = audio_capture_start();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "audio bring-up failed: %s", esp_err_to_name(err));
-        ui_set_msg("Microphone error");
+        ui_set_error("Microphone error");
     }
 
     /* Last, and deliberately so: this is the line that costs us the
