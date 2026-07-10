@@ -1,11 +1,13 @@
 #include "audio_capture.h"
 
+#include <math.h>
 #include <string.h>
 
 #include "app_sm.h"
 #include "bsp/esp-bsp.h"
 #include "core/wav.h"
 #include "esp_check.h"
+#include "dsps_fft2r.h"
 #include "esp_codec_dev.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -20,6 +22,15 @@ static const char *TAG = "audio";
 #define CHUNK_SAMPLES 320 /* 20 ms at 16 kHz */
 #define CHUNK_BYTES   (CHUNK_SAMPLES * sizeof(int16_t))
 
+/* Peak that fills the level meter. Well below full scale (32767): loud speech
+ * at 42 dB gain lands around here, so normal speech spans the bars instead of
+ * pinning them near zero. */
+#define METER_REF_PEAK 8000.0f
+
+/* FFT magnitudes are much larger than raw peaks (summed over a window), so the
+ * spectrum reference is far higher than the meter's. Tuned for speech. */
+#define SPECTRUM_REF 25000.0f
+
 static esp_codec_dev_handle_t s_mic;
 static uint8_t *s_clip;      /* [WAV_HEADER_SIZE][pcm...] in PSRAM */
 static size_t s_cursor;      /* pcm bytes written */
@@ -31,8 +42,77 @@ static volatile size_t s_trim_bytes;
 static uint32_t s_clip_ms;
 static int s_clip_peak;
 static int s_live_peak;
+static const char *s_reject; /* why the last clip was unusable, or "" */
 
 static int16_t s_chunk[CHUNK_SAMPLES];
+
+/* ------------------------------------------------------------- spectrum ---
+ *
+ * A 256-point FFT of each chunk, grouped into AUDIO_SPECTRUM_BANDS log-spaced
+ * bands so bass and treble get their own bars -- a real analyser, not the
+ * scrolling level history it replaces. esp-dsp does the transform in-place on
+ * an interleaved complex array; we feed real samples with zero imaginary part
+ * and read magnitudes from the lower half. */
+#define FFT_SIZE 256
+#define FFT_BINS (FFT_SIZE / 2)
+
+static float s_window[FFT_SIZE];        /* Hann, cuts spectral leakage */
+static float s_fft[FFT_SIZE * 2];       /* interleaved re,im */
+static uint16_t s_band_lo[AUDIO_SPECTRUM_BANDS]; /* first FFT bin of each band */
+static bool s_fft_ready;
+
+static void spectrum_init(void)
+{
+    if (dsps_fft2r_init_fc32(NULL, FFT_SIZE) != ESP_OK) {
+        ESP_LOGW(TAG, "FFT init failed; spectrum disabled");
+        return;
+    }
+    for (int i = 0; i < FFT_SIZE; i++) {
+        s_window[i] = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * i / (FFT_SIZE - 1)));
+    }
+    /* Log-spaced band edges from ~125 Hz (bin 2) to ~6 kHz (bin 96): speech
+     * lives here, and log spacing matches how the ear groups pitch. */
+    const float lo = 2.0f, hi = 96.0f;
+    for (int b = 0; b < AUDIO_SPECTRUM_BANDS; b++) {
+        s_band_lo[b] = (uint16_t)(lo * powf(hi / lo, (float)b / AUDIO_SPECTRUM_BANDS));
+    }
+    s_fft_ready = true;
+}
+
+static void spectrum_of(const int16_t *pcm)
+{
+    if (!s_fft_ready) {
+        return;
+    }
+    for (int i = 0; i < FFT_SIZE; i++) {
+        s_fft[2 * i]     = (float)pcm[i] * s_window[i];
+        s_fft[2 * i + 1] = 0.0f;
+    }
+    dsps_fft2r_fc32(s_fft, FFT_SIZE);
+    dsps_bit_rev_fc32(s_fft, FFT_SIZE);
+
+    uint8_t bands[AUDIO_SPECTRUM_BANDS];
+    for (int b = 0; b < AUDIO_SPECTRUM_BANDS; b++) {
+        const int k0 = s_band_lo[b];
+        const int k1 = (b + 1 < AUDIO_SPECTRUM_BANDS) ? s_band_lo[b + 1] : FFT_BINS;
+        float mag = 0.0f;
+        for (int k = k0; k < k1 && k < FFT_BINS; k++) {
+            const float re = s_fft[2 * k], im = s_fft[2 * k + 1];
+            const float m = sqrtf(re * re + im * im);
+            if (m > mag) {
+                mag = m; /* peak within the band reads livelier than an average */
+            }
+        }
+        /* sqrt curve + a reference tuned so speech spans the bars, same logic as
+         * the old level meter. */
+        float norm = sqrtf(mag / SPECTRUM_REF);
+        if (norm > 1.0f) {
+            norm = 1.0f;
+        }
+        bands[b] = (uint8_t)(norm * 100.0f);
+    }
+    ui_set_spectrum(bands);
+}
 
 static int peak_of(const int16_t *s, size_t n)
 {
@@ -63,7 +143,18 @@ static void capture_task(void *arg)
 
         /* Decay the meter so it falls smoothly rather than flickering. */
         s_live_peak = peak > s_live_peak ? peak : (s_live_peak * 7) / 8;
-        ui_set_level((s_live_peak * 100) / 32767);
+
+        /* Map the peak to a 0..100 meter. NOT against full scale (32767): speech
+         * peaks around 500-3000, so that mapping pinned every bar near the floor
+         * and the meter looked like a flat line. Reference a realistic loud-speech
+         * level instead, and take the square root so quiet speech still lifts the
+         * bars visibly rather than hugging zero. */
+        float norm = (float)s_live_peak / METER_REF_PEAK;
+        if (norm > 1.0f) {
+            norm = 1.0f;
+        }
+        ui_set_level((int)(sqrtf(norm) * 100.0f));
+        spectrum_of(s_chunk);
 
         if (s_recording) {
             /* Swallow the press tone. It plays out of a speaker two centimetres
@@ -143,7 +234,13 @@ esp_err_t audio_capture_start(void)
         .sample_rate     = AUDIO_SAMPLE_RATE,
     };
     ESP_RETURN_ON_FALSE(esp_codec_dev_open(s_mic, &fs) == 0, ESP_FAIL, TAG, "codec open");
-    ESP_RETURN_ON_FALSE(esp_codec_dev_set_in_gain(s_mic, 30.0f) == 0, ESP_FAIL, TAG, "set gain");
+    /* 42 dB, not 30. At 30 dB, normal speech peaked at ~500/32767 -- below the
+     * 600 silence guard -- so clips were silently dropped as TOO QUIET and never
+     * uploaded. +12 dB is ~4x amplitude (peak ~2000), clear of the guard with
+     * headroom below full scale for loud input. */
+    ESP_RETURN_ON_FALSE(esp_codec_dev_set_in_gain(s_mic, 42.0f) == 0, ESP_FAIL, TAG, "set gain");
+
+    spectrum_init();
 
     /* Core 1: I2S DMA has hard deadlines and core 0 carries Wi-Fi. */
     BaseType_t ok = xTaskCreatePinnedToCore(capture_task, "audio_cap", 4096, NULL, 6, NULL, 1);
@@ -177,17 +274,21 @@ void audio_record_end(void)
      * written straight into s_clip + 44, so no copy is needed. */
     wav_write_header(s_clip, WAV_HEADER_SIZE, (uint32_t)s_cursor, AUDIO_SAMPLE_RATE, AUDIO_BITS,
                      AUDIO_CHANNELS);
+    /* Only a too-short tap is rejected now. A quiet clip still uploads: if the
+     * user held the button and spoke, that intent is honoured, and true silence
+     * comes back as empty text ("No speech detected") rather than being eaten
+     * here. A client-side volume gate that discards a deliberate hold is wrong. */
+    s_reject = s_clip_ms < AUDIO_MIN_CLIP_MS ? "Too short - hold and speak" : "";
     ESP_LOGI(TAG, "record: end -- %u ms, %u bytes, peak %d/32767 (%s)", (unsigned)s_clip_ms,
-             (unsigned)s_cursor, s_clip_peak,
-             audio_clip_usable() ? "usable"
-             : s_clip_ms < AUDIO_MIN_CLIP_MS ? "TOO SHORT"
-                                             : "TOO QUIET");
+             (unsigned)s_cursor, s_clip_peak, s_reject[0] ? s_reject : "usable");
 }
 
 bool audio_clip_usable(void)
 {
-    return s_clip_ms >= AUDIO_MIN_CLIP_MS && s_clip_peak >= AUDIO_SILENCE_PEAK;
+    return s_clip_ms >= AUDIO_MIN_CLIP_MS;
 }
+
+const char *audio_clip_reject_reason(void) { return s_reject; }
 
 uint32_t audio_clip_ms(void) { return s_clip_ms; }
 int audio_clip_peak(void) { return s_clip_peak; }

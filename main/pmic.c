@@ -52,6 +52,17 @@ static esp_err_t reg_read(uint8_t reg, uint8_t *val)
     return i2c_master_transmit_receive(s_dev, &reg, 1, val, 1, I2C_TIMEOUT_MS);
 }
 
+#define STATUS1_VBUS_GOOD (1u << 5)
+
+bool pmic_vbus_present(void)
+{
+    uint8_t v;
+    if (s_dev == NULL || reg_read(REG_STATUS1, &v) != ESP_OK) {
+        return false;
+    }
+    return (v & STATUS1_VBUS_GOOD) != 0;
+}
+
 static esp_err_t reg_write(uint8_t reg, uint8_t val)
 {
     const uint8_t buf[2] = {reg, val};

@@ -6,6 +6,9 @@ idf_component_register(
         "provisioning.c"
         "pmic.c"
         "ui.c"
+        "assets/bg_main.c"
+        "assets/btn_mic.c"
+        "assets/ic_mic.c"
         "audio_capture.c"
         "beeper.c"
         "diagnostics.c"
@@ -25,4 +28,5 @@ idf_component_register(
         esp_timer
         lwip
         driver
+        esp_lcd_touch
 )

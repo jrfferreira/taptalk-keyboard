@@ -73,10 +73,22 @@ CONFIG_LV_USE_QRCODE=y
 # QSPI DMA out of PSRAM, with the 64-byte cache line octal PSRAM requires, is
 # what painted the setup screen in white bands.
 #
-# 32 rows is 368*32*2 = 23,552 bytes: under the threshold below, so it stays in
-# internal RAM, which is DMA-capable and cache-coherent.
-CONFIG_BSP_DISPLAY_LVGL_BUF_HEIGHT=32
-CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=32768
+# 16 rows is 368*16*2 = 11,776 bytes, which is under ESP-IDF's DEFAULT
+# SPIRAM_MALLOC_ALWAYSINTERNAL threshold of 16384. So the buffer lands in
+# internal RAM -- DMA-capable and cache-coherent -- without touching the
+# threshold at all.
+#
+# It previously used 32 rows (23,552 B) and RAISED the threshold to 32768 to
+# force that allocation internal. That forced EVERY sub-32KB allocation
+# internal too: Wi-Fi, lwIP, TinyUSB, httpd, and the SPI driver's DMA
+# descriptors. Internal free fell from 73K to 63K with a largest block of 31K,
+# and esp_lcd_panel_draw_bitmap() started failing -- at which point
+# esp_lvgl_port never calls lv_display_flush_ready(), and the render task waits
+# forever holding the LVGL lock. The screen freezes; every other task keeps
+# running, so the log looks healthy.
+#
+# Never widen a global allocator policy to satisfy one allocation.
+CONFIG_BSP_DISPLAY_LVGL_BUF_HEIGHT=16
 
 # Four-stop background gradient. LVGL's default cap is 2, which bands visibly
 # across 448 px on an AMOLED.
@@ -85,3 +97,11 @@ CONFIG_LV_GRADIENT_MAX_STOPS=4
 # Compile DEBUG in; app_main raises our own tags to it. Without this the calls
 # are stripped by the preprocessor and no runtime switch can bring them back.
 CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+
+
+# LVGL fails silently by default: LV_ASSERT_HANDLER is a bare `while(1);` and
+# LV_USE_LOG is off, so an out-of-memory inside the renderer hangs the task
+# without printing anything. It cost a day. Now it says "Out of memory" first.
+CONFIG_LV_USE_LOG=y
+CONFIG_LV_LOG_LEVEL_WARN=y
+CONFIG_LV_LOG_PRINTF=y

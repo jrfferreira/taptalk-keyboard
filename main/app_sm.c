@@ -78,7 +78,7 @@ static void run_actions(uint32_t actions)
     if (actions & ACT_PROV_START) {
         prov_info_t info;
         if (provisioning_start(&info) == ESP_OK) {
-            ui_show_setup(&info);
+            ui_show_setup(&info, config_is_provisioned(&s_cfg));
         } else {
             ui_set_error("Setup AP failed");
         }
@@ -102,7 +102,7 @@ static void run_actions(uint32_t actions)
     if (actions & ACT_UPLOAD_START) {
         size_t total = 0;
         const uint8_t *wav = audio_clip_wav(&total);
-        ui_set_status("Transcribing\u2026");
+        ui_set_status("Transcribing...");
         if (stt_start(s_cfg.api_key, wav, total) != ESP_OK) {
             ui_set_error(stt_error());
             app_sm_post(EV_STT_FAIL);
@@ -112,13 +112,19 @@ static void run_actions(uint32_t actions)
         stt_abort();
     }
     if (actions & ACT_TYPE_START) {
-        ui_set_status("Typing\u2026");
+        ui_set_status("Typing...");
         if (hid_kbd_type(stt_transcript()) != ESP_OK) {
             app_sm_post(EV_TYPE_ABORT);
         }
     }
     if (actions & ACT_TYPE_ABORT) {
         hid_kbd_abort();
+    }
+    if (actions & ACT_HINT_QUIET) {
+        /* Before ACT_CLIP_DISCARD below wipes the reason. This is what turns
+         * "button goes red, then nothing" into an explanation. */
+        beeper_play(BEEP_ERROR);
+        ui_set_error(audio_clip_reject_reason());
     }
     if (actions & ACT_CLIP_DISCARD) {
         audio_clip_discard();
@@ -157,13 +163,18 @@ static void sm_task(void *arg)
         app_event_t ev;
         diag_beat_sm();
         if (xQueueReceive(s_queue, &ev, pdMS_TO_TICKS(TICK_MS)) != pdTRUE) {
-            /* Idle tick. No enumerated host means nothing to type into, so
-             * recording is pointless and the USB icon must say so. */
+            /* Idle tick.
+             *
+             * The record GUARD tracks tud_mounted(): an enumerated host is what
+             * makes typing possible. The ICON tracks the PMIC's VBUS-good bit,
+             * because tud_mounted() is configured bus-powered and never reports
+             * a cable unplug on a board that keeps running on battery -- so the
+             * icon would otherwise stay lit forever. Two signals, two meanings. */
             const bool usb_now = hid_kbd_mounted();
             if (usb_now != s_usb) {
-                ui_set_usb(usb_now);
                 app_sm_post(usb_now ? EV_USB_MOUNT : EV_USB_UNMOUNT);
             }
+            ui_set_usb(pmic_vbus_present());
 
             /* An error state clears itself so the device does not strand the
              * user on a dead screen — unless it is unprovisioned, in which

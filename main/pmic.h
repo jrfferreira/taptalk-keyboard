@@ -28,3 +28,13 @@ typedef struct {
  * Returns ESP_ERR_NOT_FOUND if the chip does not answer, in which case no
  * write is attempted. */
 esp_err_t pmic_init(pmic_status_t *out);
+
+/* Is USB-C delivering power right now?
+ *
+ * TinyUSB's tud_mounted() is configured bus-powered (self_powered = false), so
+ * it assumes VBUS is present whenever the firmware is running -- and this board
+ * keeps running on battery after the cable is pulled, so tud_mounted() never
+ * reports the unplug and the "USB" icon would stay lit forever. The AXP2101, as
+ * the power-path controller, always knows: register 0x00 ("PMU status 1")
+ * bit 5 is VBUS-good. Returns false if the chip is absent or the read fails. */
+bool pmic_vbus_present(void);

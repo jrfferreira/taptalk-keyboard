@@ -4,6 +4,10 @@
 #include <string.h>
 
 #include "app_sm.h"
+#include "audio_capture.h"
+#include "assets/bg_main.h"
+#include "assets/btn_mic.h"
+#include "assets/ic_mic.h"
 #include "beeper.h"
 #include "diagnostics.h"
 #include "bsp/esp-bsp.h"
@@ -22,11 +26,14 @@ static const char *TAG = "ui";
 
 /* Panel is 368x448. */
 #define BTN_D 228
-#define WAVE_BARS 14
-#define WAVE_BAR_W 3
-#define WAVE_BAR_GAP 4
-#define WAVE_H 38
-#define WAVE_MIN 3
+/* The spectrum analyser: full-width bars rising from the bottom edge, low
+ * opacity, behind the button -- the sound "coming up from the floor" of the
+ * screen. One bar per FFT band. Sized for the 448 px landscape width. */
+#define SPEC_BARS  AUDIO_SPECTRUM_BANDS
+#define SPEC_BAR_W 10
+#define SPEC_STEP  16   /* bar pitch; SPEC_BARS * SPEC_STEP ~ screen width */
+#define SPEC_H     150  /* max bar height */
+#define SPEC_MIN   0  /* zero at silence: no dashes along the bottom */
 #define ICON_HIT 72   /* transparent touch target; the glyph is smaller than the tap */
 #define EDGE 16       /* inset from the rounded corners of the panel */
 
@@ -58,6 +65,7 @@ static const char *TAG = "ui";
 typedef struct {
     app_state_t state;
     int level;
+    uint8_t spectrum[SPEC_BARS];
     uint32_t clip_ms;
     bool wifi;
     bool usb;
@@ -69,14 +77,14 @@ static ui_model_t s_model;
 static SemaphoreHandle_t s_lock;
 
 static lv_obj_t *s_main, *s_setup;
-static lv_obj_t *s_btn, *s_timer, *s_status;
+static lv_obj_t *s_btn, *s_mic, *s_timer, *s_status;
 static lv_obj_t *s_ico_usb, *s_ico_wifi, *s_badge, *s_badge_hit;
 static lv_obj_t *s_sheet, *s_sheet_text;
-static lv_obj_t *s_wave[WAVE_BARS];
+static lv_obj_t *s_spec[SPEC_BARS];
 
-/* Rolling level history, oldest first. Shifting it each tick is what makes
- * the bars travel instead of just pulsing in place. */
-static uint8_t s_hist[WAVE_BARS];
+/* Smoothed on-screen bar heights (fast attack, slow decay). Touched only in the
+ * LVGL tick, so no lock; the raw FFT targets live in the model. */
+static uint8_t s_spec_shown[SPEC_BARS];
 
 static void model_lock(void) { xSemaphoreTake(s_lock, portMAX_DELAY); }
 static void model_unlock(void) { xSemaphoreGive(s_lock); }
@@ -90,6 +98,13 @@ static void model_unlock(void) { xSemaphoreGive(s_lock); }
 
 void ui_set_state(app_state_t state) { MODEL_SET(state, state); }
 void ui_set_level(int percent) { MODEL_SET(level, percent < 0 ? 0 : (percent > 100 ? 100 : percent)); }
+
+void ui_set_spectrum(const uint8_t *bands)
+{
+    model_lock();
+    memcpy(s_model.spectrum, bands, SPEC_BARS);
+    model_unlock();
+}
 void ui_set_wifi(bool connected) { MODEL_SET(wifi, connected); }
 void ui_set_usb(bool connected) { MODEL_SET(usb, connected); }
 
@@ -112,24 +127,6 @@ void ui_set_error(const char *text) { set_msg(text, true); }
 void ui_clear_msg(void) { set_msg("", false); }
 
 /* ------------------------------------------------------------------ paint */
-
-static void set_grad(lv_obj_t *o, uint32_t top, uint32_t bot)
-{
-    lv_obj_set_style_bg_color(o, lv_color_hex(top), LV_PART_MAIN);
-    lv_obj_set_style_bg_grad_color(o, lv_color_hex(bot), LV_PART_MAIN);
-    lv_obj_set_style_bg_grad_dir(o, LV_GRAD_DIR_VER, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(o, LV_OPA_COVER, LV_PART_MAIN);
-}
-
-/* The pressed look is a STYLE on LV_STATE_PRESSED, not something ui_tick()
- * paints. LVGL swaps and animates it in the render task on the touch event
- * itself, so the feedback is immediate and the tick stays free -- which is the
- * whole lesson of the twelve-second screen. */
-static void set_grad_pressed(lv_obj_t *o, uint32_t top, uint32_t bot)
-{
-    lv_obj_set_style_bg_color(o, lv_color_hex(top), LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_bg_grad_color(o, lv_color_hex(bot), LV_PART_MAIN | LV_STATE_PRESSED);
-}
 
 /* Runs in the LVGL task, which already holds the LVGL lock.
  *
@@ -161,39 +158,63 @@ static void ui_tick(lv_timer_t *timer)
     const bool rec = (m.state == ST_RECORDING);
     if ((int)rec != last_rec) {
         last_rec = rec;
-        set_grad(s_btn, rec ? C_REC_TOP : C_IDLE_TOP, rec ? C_REC_BOT : C_IDLE_BOT);
-        set_grad_pressed(s_btn, rec ? C_REC_TOP_P : C_IDLE_TOP_P,
-                         rec ? C_REC_BOT_P : C_IDLE_BOT_P);
-        lv_obj_set_style_shadow_color(s_btn, lv_color_hex(rec ? C_REC_TOP : C_IDLE_TOP),
-                                      LV_PART_MAIN);
+        /* Swap the whole depth-shaded disc: green idle, red recording. */
+        lv_obj_set_style_bg_image_src(s_btn, rec ? &btn_rec : &btn_idle, LV_PART_MAIN);
+        /* The mic and the timer trade places: the mic says "press me", the
+         * running clock says "I am listening". Showing both at once was the old
+         * bug -- the mic's foot bar sat exactly where the timer drew, so the
+         * timer looked absent. */
         if (rec) {
+            lv_obj_add_flag(s_mic, LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(s_timer, LV_OBJ_FLAG_HIDDEN);
         } else {
+            lv_obj_remove_flag(s_mic, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(s_timer, LV_OBJ_FLAG_HIDDEN);
             last_timer_tenths = UINT32_MAX;
         }
     }
 
+    /* While a clip is uploading or being typed, the button is inert: the state
+     * machine ignores a press in those states, but a bright button invites one.
+     * Dim it and drop LV_OBJ_FLAG_CLICKABLE so it neither reacts nor lights up
+     * until the transcript has landed. */
+    static int last_busy = -1;
+    const bool busy = (m.state == ST_UPLOADING || m.state == ST_TYPING);
+    if ((int)busy != last_busy) {
+        last_busy = busy;
+        lv_obj_set_style_opa(s_btn, busy ? LV_OPA_40 : LV_OPA_COVER, LV_PART_MAIN);
+        if (busy) {
+            lv_obj_remove_flag(s_btn, LV_OBJ_FLAG_CLICKABLE);
+        } else {
+            lv_obj_add_flag(s_btn, LV_OBJ_FLAG_CLICKABLE);
+        }
+    }
+
     if (rec) {
+        /* Tenths, so the readout visibly moves every 100 ms. A seconds-only
+         * counter sits still for a whole second at a time, which reads as "no
+         * feedback" -- the complaint this fixes. */
         const uint32_t tenths = m.clip_ms / 100;
         if (tenths != last_timer_tenths) {
             last_timer_tenths = tenths;
-            lv_label_set_text_fmt(s_timer, "%u.%u", (unsigned)(tenths / 10),
+            lv_label_set_text_fmt(s_timer, "%u.%us", (unsigned)(tenths / 10),
                                   (unsigned)(tenths % 10));
         }
     }
 
-    /* Scroll the history one step and append the newest level. */
-    memmove(s_hist, s_hist + 1, WAVE_BARS - 1);
-    s_hist[WAVE_BARS - 1] = (uint8_t)m.level;
-
-    for (int i = 0; i < WAVE_BARS; i++) {
-        const int h = WAVE_MIN + (s_hist[i] * (WAVE_H - WAVE_MIN)) / 100;
-        if (lv_obj_get_height(s_wave[i]) != h) {
-            lv_obj_set_height(s_wave[i], h);
-            /* Quieter bars fade rather than vanish, so the line always reads. */
-            lv_obj_set_style_bg_opa(s_wave[i], (lv_opa_t)(70 + (s_hist[i] * 185) / 100),
-                                    LV_PART_MAIN);
+    /* Spectrum: each bar chases its FFT band. Fast attack, slow decay -- it
+     * snaps up to a transient and eases back down, which is what makes an
+     * analyser read as one. m.spectrum holds the latest FFT frame. */
+    for (int i = 0; i < SPEC_BARS; i++) {
+        const uint8_t tgt = m.spectrum[i];
+        if (tgt >= s_spec_shown[i]) {
+            s_spec_shown[i] = tgt;                       /* attack: jump up */
+        } else {
+            s_spec_shown[i] -= (s_spec_shown[i] - tgt) / 3 + 1; /* decay: ease down */
+        }
+        const int h = SPEC_MIN + (s_spec_shown[i] * (SPEC_H - SPEC_MIN)) / 100;
+        if (lv_obj_get_height(s_spec[i]) != h) {
+            lv_obj_set_height(s_spec[i], h);
         }
     }
 
@@ -274,6 +295,7 @@ static void on_press_lost(lv_event_t *e)
     app_sm_post(EV_PRESS_LOST);
 }
 static void on_setup(lv_event_t *e) { (void)e; app_sm_post(EV_ENTER_SETUP); }
+static void on_setup_exit(lv_event_t *e) { (void)e; app_sm_post(EV_SETUP_EXIT); }
 
 
 
@@ -326,81 +348,80 @@ static void build_sheet(void)
     lv_obj_center(okl);
 }
 
+/* The microphone is a baked, anti-aliased A8 mask (tools/bake_mic.py), recoloured
+ * to INK so the one image reads on both the green idle and red recording discs.
+ * The four-primitive version it replaces looked hand-drawn; this has smooth
+ * edges and no per-part alignment to drift. */
+static void build_mic(lv_obj_t *btn)
+{
+    s_mic = lv_image_create(btn);
+    lv_image_set_src(s_mic, &ic_mic);
+    lv_obj_set_style_image_recolor(s_mic, lv_color_hex(C_INK), LV_PART_MAIN);
+    lv_obj_set_style_image_recolor_opa(s_mic, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_align(s_mic, LV_ALIGN_CENTER, 0, -6);
+    lv_obj_remove_flag(s_mic, LV_OBJ_FLAG_CLICKABLE); /* the button handles touch */
+}
+
 static void build_main(void)
 {
     s_main = lv_obj_create(NULL);
     lv_obj_remove_flag(s_main, LV_OBJ_FLAG_SCROLLABLE);
 
-    /* A screen from lv_obj_create(NULL) is LV_OPA_TRANSP unless a theme covers
-     * it, and a transparent screen composites against whatever was in the
-     * buffer last. Hence the explicit opacity below.
+    /* A dithered background baked to flash, not a runtime gradient.
      *
-     * Four stops, not two. On an AMOLED this contrasty, a two-stop ramp across
-     * 448 px bands visibly in the dark end. The top stop is true black, which
-     * on OLED means those pixels are simply off. */
-    static lv_color_t grad_colors[4];
-    static lv_opa_t   grad_opas[4];
-    static lv_grad_dsc_t bg_grad;
-    grad_colors[0] = lv_color_hex(C_BG_0);
-    grad_colors[1] = lv_color_hex(C_BG_1);
-    grad_colors[2] = lv_color_hex(C_BG_2);
-    grad_colors[3] = lv_color_hex(C_BG_3);
-    for (int i = 0; i < 4; i++) {
-        grad_opas[i] = LV_OPA_COVER;
-        bg_grad.stops[i].color = grad_colors[i];
-        bg_grad.stops[i].opa   = grad_opas[i];
-    }
-    /* Weighted so the black holds most of the panel and the colour lifts only
-     * near the bottom, under the button. */
-    bg_grad.stops[0].frac = 0;
-    bg_grad.stops[1].frac = 120;
-    bg_grad.stops[2].frac = 205;
-    bg_grad.stops[3].frac = 255;
-    bg_grad.stops_count   = 4;
-    bg_grad.dir           = LV_GRAD_DIR_VER;
-    lv_obj_set_style_bg_grad(s_main, &bg_grad, LV_PART_MAIN);
+     * A live lv_grad in RGB565 bands hard: ~6 distinct blue levels across 448 px,
+     * and LVGL 9 dropped the gradient dithering v8 had. tools/bake_bg.py does the
+     * ramp at full precision and Floyd-Steinberg dithers it down, so the steps
+     * become imperceptible pixel noise. LVGL draws it straight from .rodata --
+     * no gradient math, no per-chunk recompute. The top stays true black, so those
+     * OLED pixels are simply off. */
+    lv_obj_set_style_bg_image_src(s_main, &bg_main, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_main, LV_OPA_COVER, LV_PART_MAIN);
 
     /* ---- the button owns the middle ---- */
     s_btn = lv_button_create(s_main);
     lv_obj_set_size(s_btn, BTN_D, BTN_D);
     lv_obj_align(s_btn, LV_ALIGN_CENTER, 0, -8);
-    lv_obj_set_style_radius(s_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_btn, 0, LV_PART_MAIN);
-    /* 20 px, not 40: the shadow is blurred in software, and its bounding box
-     * is what gets re-rendered. */
-    lv_obj_set_style_shadow_width(s_btn, 20, LV_PART_MAIN);
-    lv_obj_set_style_shadow_opa(s_btn, LV_OPA_30, LV_PART_MAIN);
-    lv_obj_set_style_shadow_spread(s_btn, 0, LV_PART_MAIN);
 
-    /* Animate the colour swap, and ONLY the colour swap.
-     *
-     * transform_scale used to live here. Any non-identity transform makes LVGL
-     * render the object into its own layer: 228 px button + 20 px shadow at
-     * RGB565 is ~140 KB, allocated above the 32 KB internal threshold and
-     * therefore in PSRAM, re-rendered on every invalidation. The LVGL task
-     * wedged on it. Everything else kept running, which is why the log looked
-     * healthy while the screen was frozen and touch was dead. */
-    static const lv_style_prop_t press_props[] = {LV_STYLE_BG_COLOR, LV_STYLE_BG_GRAD_COLOR, 0};
-    static lv_style_transition_dsc_t press_tr;
-    lv_style_transition_dsc_init(&press_tr, press_props, lv_anim_path_ease_out, PRESS_MS, 0, NULL);
-    lv_obj_set_style_transition(s_btn, &press_tr, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_transition(s_btn, &press_tr, LV_PART_MAIN | LV_STATE_PRESSED);
+    /* The button IS an image now: a depth-shaded disc baked by
+     * tools/bake_button.py -- radial sheen, specular highlight, rim, and a soft
+     * glow, none of which a runtime shadow could give us (a box-shadow is what
+     * froze the device; see build history). The image carries its own circular
+     * alpha, so:
+     *   - radius stays 0. A CIRCLE radius would clip the bg_image to a hard
+     *     circle and shear off the soft glow.
+     *   - the object's own fill is transparent; only the image shows.
+     *   - no shadow_width, so lv_draw_sw_box_shadow() is never reached. */
+    lv_obj_set_style_radius(s_btn, 0, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_btn, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(s_btn, 0, LV_PART_MAIN);
+    lv_obj_set_style_bg_image_src(s_btn, &btn_idle, LV_PART_MAIN);
+
+    /* Press feedback without a transform or a shadow: darken the image slightly
+     * while held. LVGL applies this in the render task on the touch event, so
+     * the tick stays free. */
+    lv_obj_set_style_bg_image_recolor(s_btn, lv_color_black(), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_image_recolor_opa(s_btn, LV_OPA_20, LV_PART_MAIN | LV_STATE_PRESSED);
 
     lv_obj_add_event_cb(s_btn, on_press, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(s_btn, on_release, LV_EVENT_RELEASED, NULL);
     lv_obj_add_event_cb(s_btn, on_press_lost, LV_EVENT_PRESS_LOST, NULL);
 
-    lv_obj_t *mic = lv_label_create(s_btn);
-    lv_label_set_text(mic, LV_SYMBOL_AUDIO);
-    lv_obj_set_style_text_font(mic, FONT_BIG, LV_PART_MAIN);
-    lv_obj_set_style_text_color(mic, lv_color_hex(C_INK), LV_PART_MAIN);
-    lv_obj_align(mic, LV_ALIGN_CENTER, 0, -20);
+    /* A real microphone, not LV_SYMBOL_AUDIO -- the built-in font's nearest
+     * glyph is a musical note. Drawn from three primitives, the same shapes the
+     * web mockup uses: a capsule body, an arc cradle, a stem. No shadow, no
+     * large-radius fill, so nothing here can repeat the box-shadow OOM. */
+    build_mic(s_btn);
 
+    /* The recording readout replaces the mic in the centre of the button while
+     * a clip is being captured. Big and near-white so it reads as the loud,
+     * unmistakable "you are recording" signal -- INK-on-red was too quiet. */
     s_timer = lv_label_create(s_btn);
     lv_obj_set_style_text_font(s_timer, FONT_BIG, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_timer, lv_color_hex(C_INK), LV_PART_MAIN);
-    lv_obj_align(s_timer, LV_ALIGN_CENTER, 0, 34);
+    lv_obj_set_style_text_color(s_timer, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_text_opa(s_timer, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_center(s_timer);
     lv_obj_add_flag(s_timer, LV_OBJ_FLAG_HIDDEN);
 
     /* ---- four corners, Apple Watch style ----
@@ -417,22 +438,29 @@ static void build_main(void)
     lv_obj_set_style_text_font(s_ico_wifi, FONT_BIG, LV_PART_MAIN);
     lv_obj_align(s_ico_wifi, LV_ALIGN_TOP_RIGHT, -(EDGE + 20), EDGE + 12);
 
-    /* Bottom-left: the level meter, as a compact complication. */
-    lv_obj_t *wave = lv_obj_create(s_main);
-    lv_obj_remove_style_all(wave);
-    lv_obj_set_size(wave, WAVE_BARS * (WAVE_BAR_W + WAVE_BAR_GAP), WAVE_H);
-    lv_obj_align(wave, LV_ALIGN_BOTTOM_LEFT, EDGE + 12, -(EDGE + 14));
-    lv_obj_remove_flag(wave, LV_OBJ_FLAG_SCROLLABLE);
-    for (int i = 0; i < WAVE_BARS; i++) {
-        lv_obj_t *b = lv_obj_create(wave);
+    /* The spectrum analyser: one bar per FFT band, spanning the full width and
+     * anchored to the bottom edge so the bars rise from the floor of the screen.
+     * Low opacity, and moved behind the button so it reads as ambient rather
+     * than a widget competing with the mic. */
+    const int total = SPEC_BARS * SPEC_STEP;
+    lv_obj_t *spec = lv_obj_create(s_main);
+    lv_obj_remove_style_all(spec);
+    lv_obj_set_size(spec, total, SPEC_H);
+    lv_obj_align(spec, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_remove_flag(spec, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(spec, LV_OBJ_FLAG_CLICKABLE);
+    for (int i = 0; i < SPEC_BARS; i++) {
+        lv_obj_t *b = lv_obj_create(spec);
         lv_obj_remove_style_all(b);
-        lv_obj_set_size(b, WAVE_BAR_W, WAVE_MIN);
-        lv_obj_align(b, LV_ALIGN_LEFT_MID, i * (WAVE_BAR_W + WAVE_BAR_GAP), 0);
-        lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+        lv_obj_set_size(b, SPEC_BAR_W, SPEC_MIN);
+        /* Anchored bottom so growing the height makes the bar climb upward. */
+        lv_obj_align(b, LV_ALIGN_BOTTOM_LEFT, i * SPEC_STEP, 0);
+        lv_obj_set_style_radius(b, 3, LV_PART_MAIN);
         lv_obj_set_style_bg_color(b, lv_color_hex(C_ON), LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(b, LV_OPA_70, LV_PART_MAIN);
-        s_wave[i] = b;
+        lv_obj_set_style_bg_opa(b, LV_OPA_20, LV_PART_MAIN); /* ambient, not loud */
+        s_spec[i] = b;
     }
+    lv_obj_move_background(spec); /* behind the button and the mic */
 
     /* Bottom-right: setup. A 72 px transparent tap target around a 28 px cog,
      * because a fingertip is about 9 mm and the glyph is 3. */
@@ -448,10 +476,15 @@ static void build_main(void)
     lv_obj_set_style_text_color(cog, lv_color_hex(C_COG), LV_PART_MAIN);
     lv_obj_center(cog);
 
-    /* ---- transient status, and the error badge ---- */
+    /* ---- transient status, and the error badge ----
+     * Status ("Transcribing...", "Typing...") sits on the left, vertically
+     * centred so multi-line text stacks around the middle rather than climbing
+     * from the bottom. The button holds the other side. */
     s_status = lv_label_create(s_main);
     lv_obj_set_style_text_color(s_status, lv_color_hex(C_STATUS), LV_PART_MAIN);
-    lv_obj_align(s_status, LV_ALIGN_CENTER, 0, 128);
+    lv_obj_set_width(s_status, 150);
+    lv_obj_set_style_text_align(s_status, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+    lv_obj_align(s_status, LV_ALIGN_LEFT_MID, EDGE, 0);
     lv_obj_add_flag(s_status, LV_OBJ_FLAG_HIDDEN);
 
     s_badge_hit = lv_obj_create(s_main);
@@ -472,7 +505,7 @@ static void build_main(void)
     build_sheet();
 }
 
-void ui_show_setup(const prov_info_t *info)
+void ui_show_setup(const prov_info_t *info, bool can_exit)
 {
     /* A cold first paint can hold the LVGL lock for a while. Giving up here
      * leaves the user staring at a half-drawn main screen with no way in. */
@@ -483,7 +516,10 @@ void ui_show_setup(const prov_info_t *info)
 
     s_setup = lv_obj_create(NULL);
     lv_obj_remove_flag(s_setup, LV_OBJ_FLAG_SCROLLABLE);
-    set_grad(s_setup, C_BG_0, C_BG_3);
+    /* The same dithered background as the main screen, so setup looks like part
+     * of the same device rather than a bare fallback. */
+    lv_obj_set_style_bg_image_src(s_setup, &bg_main, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_setup, LV_OPA_COVER, LV_PART_MAIN);
 
     lv_obj_t *t = lv_label_create(s_setup);
     lv_label_set_text(t, "Setup");
@@ -517,6 +553,24 @@ void ui_show_setup(const prov_info_t *info)
     lv_obj_set_style_text_align(creds, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(creds, lv_color_hex(0xE8EDF2), LV_PART_MAIN);
     lv_obj_align(creds, LV_ALIGN_BOTTOM_MID, 0, -26);
+
+    /* A way out -- but only when setup was opened from the cog on a working
+     * device. At first boot there is nowhere to go back to, so no button: the
+     * only exit then is finishing setup. Back reboots, which reconnects and
+     * lands on the main screen. */
+    if (can_exit) {
+        lv_obj_t *back = lv_button_create(s_setup);
+        lv_obj_set_size(back, 84, 40);
+        lv_obj_align(back, LV_ALIGN_TOP_LEFT, EDGE, EDGE);
+        lv_obj_set_style_bg_color(back, lv_color_hex(0x1B232B), LV_PART_MAIN);
+        lv_obj_set_style_radius(back, 10, LV_PART_MAIN);
+        lv_obj_set_style_shadow_width(back, 0, LV_PART_MAIN);
+        lv_obj_add_event_cb(back, on_setup_exit, LV_EVENT_CLICKED, NULL);
+        lv_obj_t *bl = lv_label_create(back);
+        lv_label_set_text(bl, LV_SYMBOL_LEFT " Back");
+        lv_obj_set_style_text_color(bl, lv_color_hex(0xE8EDF2), LV_PART_MAIN);
+        lv_obj_center(bl);
+    }
 
     lv_screen_load(s_setup);
     bsp_display_unlock();

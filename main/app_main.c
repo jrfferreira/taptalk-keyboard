@@ -24,6 +24,7 @@
 #include "esp_heap_caps.h"
 #include "driver/i2c_master.h"
 #include "esp_io_expander.h"
+#include "esp_lcd_touch.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -131,7 +132,38 @@ static void display_start(void)
      * the LVGL task itself; we must not create a second one. */
     cfg.lvgl_port_cfg.task_affinity = 1;
 
-    ESP_ERROR_CHECK(bsp_display_start_with_config(&cfg) != NULL ? ESP_OK : ESP_FAIL);
+    lv_display_t *disp = bsp_display_start_with_config(&cfg);
+    ESP_ERROR_CHECK(disp != NULL ? ESP_OK : ESP_FAIL);
+
+    /* Rotate the whole UI a quarter turn so the panel reads correctly when the
+     * device is held with the USB-C port at the top. The logical canvas becomes
+     * 448x368 (landscape); the corner layout follows via LV_ALIGN, the
+     * background is baked at the matching size. 270, not 90: at 90 the USB-C
+     * port came out the bottom. */
+    bsp_display_rotate(disp, LV_DISPLAY_ROTATION_270);
+
+    /* Rotate TOUCH to match. LVGL's sw-rotate turns the rendered image but does
+     * NOT transform touch input -- esp_lvgl_port hands LVGL the raw panel
+     * coordinates -- so without this the display is landscape while touch is
+     * still portrait, and nothing is tappable.
+     *
+     * The port keeps the esp_lcd_touch handle as the first member of the indev's
+     * driver-data struct, which is how we reach it without a public accessor.
+     * For a 270 deg rotation the transform is swap-xy plus one mirror; if taps
+     * land mirrored, flip mirror_x <-> mirror_y. */
+    lv_indev_t *indev = bsp_display_get_input_dev();
+    if (indev != NULL) {
+        void *ctx = lv_indev_get_driver_data(indev);
+        esp_lcd_touch_handle_t tp = ctx ? *(esp_lcd_touch_handle_t *)ctx : NULL;
+        if (tp != NULL) {
+            esp_lcd_touch_set_swap_xy(tp, true);
+            esp_lcd_touch_set_mirror_y(tp, true);
+            ESP_LOGI(TAG, "touch rotated to match 270 deg display");
+        } else {
+            ESP_LOGE(TAG, "could not reach touch handle; touch will be misaligned");
+        }
+    }
+
     bsp_display_backlight_on();
 }
 
@@ -188,6 +220,14 @@ void app_main(void)
     /* After audio: bsp_audio_init() no-ops on a second call, so the speaker
      * inherits the microphone's 16 kHz rather than defaulting to 22050. */
     beeper_init();
+
+#if CONFIG_TAPTALK_HID_DELAY_MS > 0
+    /* Debug: keep the USB-Serial-JTAG console alive a while longer, because the
+     * next line takes it away and everything interesting happens before then. */
+    ESP_LOGW(TAG, "holding TinyUSB back for %d ms so the boot console survives",
+             CONFIG_TAPTALK_HID_DELAY_MS);
+    vTaskDelay(pdMS_TO_TICKS(CONFIG_TAPTALK_HID_DELAY_MS));
+#endif
 
     /* Last, and deliberately so: this is the line that costs us the
      * USB-Serial-JTAG console. Everything worth watching has already logged. */

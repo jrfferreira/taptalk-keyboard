@@ -37,6 +37,10 @@ sm_out_t sm_step(app_state_t state, app_event_t event, const sm_guards_t *g)
          * worth, and a restart also re-runs the whole boot path we just
          * changed the inputs to. */
         if (event == EV_PROVISIONED) return out(ST_PROVISIONING, ACT_REBOOT);
+        /* The Back button, shown only when we entered setup already provisioned.
+         * A reboot restores the STA the AP displaced -- the same reasoning as
+         * save, above. */
+        if (event == EV_SETUP_EXIT) return out(ST_PROVISIONING, ACT_REBOOT);
         return ignore;
 
     case ST_WIFI_CONNECTING:
@@ -88,8 +92,9 @@ sm_out_t sm_step(app_state_t state, app_event_t event, const sm_guards_t *g)
          * would silently eat the sentence, which is the worse failure. The
          * clip_usable guard still filters out taps and silence. */
         if (event == EV_BTN_RELEASE || event == EV_PRESS_LOST) {
-            return g->clip_usable ? out(ST_UPLOADING, ACT_REC_STOP | ACT_UPLOAD_START)
-                                  : out(ST_IDLE_READY, ACT_REC_STOP | ACT_CLIP_DISCARD);
+            return g->clip_usable
+                       ? out(ST_UPLOADING, ACT_REC_STOP | ACT_UPLOAD_START)
+                       : out(ST_IDLE_READY, ACT_REC_STOP | ACT_CLIP_DISCARD | ACT_HINT_QUIET);
         }
         /* Hitting the cap uploads immediately rather than waiting for the
          * finger, so there is no "recording but not really" limbo. The later
@@ -183,6 +188,7 @@ const char *sm_event_name(app_event_t event)
     case EV_TIMEOUT:     return "TIMEOUT";
     case EV_ENTER_SETUP: return "ENTER_SETUP";
     case EV_PROVISIONED: return "PROVISIONED";
+    case EV_SETUP_EXIT:  return "SETUP_EXIT";
     case EV_COUNT:
     default:             return "?";
     }

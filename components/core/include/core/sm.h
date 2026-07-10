@@ -47,6 +47,7 @@ typedef enum {
     EV_TIMEOUT,
     EV_ENTER_SETUP, /* user asked for the portal, or Wi-Fi never worked */
     EV_PROVISIONED, /* credentials accepted and written to NVS */
+    EV_SETUP_EXIT,  /* backed out of setup via the Back button; reboot to normal */
     EV_COUNT,
 } app_event_t;
 
@@ -78,6 +79,7 @@ enum {
     ACT_HINT_NOT_READY = 1u << 12,
     ACT_PROV_START     = 1u << 13,
     ACT_REBOOT         = 1u << 14,
+    ACT_HINT_QUIET     = 1u << 15, /* clip dropped: tell the user why */
 };
 
 typedef struct {
