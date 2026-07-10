@@ -93,41 +93,20 @@
 
   /* --------------------------------------------------------------- device */
   .stage { display: flex; justify-content: center; margin: 46px 0 40px; }
-  /* One clock for the whole scene. Speak -> waves arrive -> the button goes red
-     -> words are typed. Three separate loops would drift against each other and
-     stop reading as cause and effect. */
+  /* One clock for the whole scene: press -> the button goes red and the meter
+     wakes -> the words are typed out below. Separate loops would drift against
+     each other and stop reading as cause and effect. */
+  /* Stacked at every width: the device, then the words it produced, centred
+     under it. Side-by-side never earned its complexity -- it only worked above
+     720px and read as three unrelated columns below. */
   .stage {
     --cycle: 7.2s;
-    display: flex; align-items: center; justify-content: center;
-    gap: clamp(6px, 2.4vw, 26px);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 18px;
     position: relative; z-index: 1;
   }
 
   .device { width: min(240px, 62vw); filter: drop-shadow(0 30px 60px rgba(0,0,0,.6)); flex: 0 0 auto; }
-
-  /* ---- left: sound arriving ---- */
-  .waves { width: clamp(44px, 11vw, 78px); flex: 0 0 auto; overflow: visible; }
-  .waves .arc {
-    fill: none; stroke: var(--mint); stroke-width: 3.4; stroke-linecap: round;
-    transform-box: fill-box; transform-origin: 0% 50%;
-    animation: ripple 1.5s ease-out infinite;
-  }
-  .waves .arc:nth-of-type(2) { animation-delay: .22s }
-  .waves .arc:nth-of-type(3) { animation-delay: .44s }
-  .waves .mouth { fill: var(--mint); }
-  @keyframes ripple {
-    0%   { opacity: 0;  transform: translateX(-3px) scaleX(.7) }
-    18%  { opacity: .85 }
-    100% { opacity: 0;  transform: translateX(9px) scaleX(1.06) }
-  }
-  /* The ripples run on their own short loop; this gates the whole group to the
-     speaking window of the cycle. */
-  .waves { animation: speaking var(--cycle) linear infinite; }
-  @keyframes speaking {
-    0%, 6%    { opacity: 0 }
-    10%, 43%  { opacity: 1 }
-    47%, 100% { opacity: 0 }
-  }
 
   /* ---- centre: the device reacts ---- */
   .pulse {
@@ -162,7 +141,7 @@
 
   /* ---- right: the words land ---- */
   .transcript {
-    width: clamp(112px, 24vw, 190px); flex: 0 0 auto;
+    width: min(300px, 84vw); flex: 0 0 auto; text-align: center;
     font: 500 clamp(11px, 1.5vw, 14px)/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
     color: var(--fg);
   }
@@ -187,18 +166,9 @@
   }
   @keyframes caret { 0%, 100% { border-color: var(--mint) } 50% { border-color: transparent } }
 
-  @media (max-width: 720px) {
-    /* No room for three columns. The waves are decorative; the typed line is
-       the point, so it moves below the device where it still reads as output. */
-    .stage { flex-direction: column; gap: 18px; }
-    .waves { display: none; }
-    .transcript { width: min(300px, 84vw); text-align: center; }
-  }
-
   @media (prefers-reduced-motion: reduce) {
-    .waves, .pulse, .rec, .wave-group, .lvl, .typed, .eyebrow .dot { animation: none; }
+    .pulse, .rec, .wave-group, .lvl, .typed, .eyebrow .dot { animation: none; }
     .pulse { opacity: .25 }
-    .waves { opacity: .5 }
     .rec { opacity: 0 }
     .wave-group { transform: none }
     /* Show the finished sentence rather than an empty box. */
@@ -396,12 +366,6 @@
 </header>
 
 <div class="stage">
-  <svg class="waves" viewBox="-6 0 56 120" aria-hidden="true">
-    <circle class="mouth" cx="0" cy="60" r="3.4"/>
-    <path class="arc" d="M0 40 A 20 20 0 0 1 0 80"/>
-    <path class="arc" d="M0 28 A 32 32 0 0 1 0 92"/>
-    <path class="arc" d="M0 16 A 44 44 0 0 1 0 104"/>
-  </svg>
   <!-- Stylised 368×448 AMOLED, drawn to match the real UI. -->
   <svg class="device" viewBox="0 0 368 448" role="img" aria-label="The device: a large hold-to-talk button filling the middle of a round-cornered AMOLED screen, with a USB icon in the top-left corner, Wi-Fi in the top-right, a live microphone waveform in the bottom-left and a settings cog in the bottom-right">
       <defs>
