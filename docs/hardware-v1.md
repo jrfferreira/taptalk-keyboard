@@ -68,6 +68,20 @@ succeeds — it just returns silence, with nothing in any log to explain why.
 `main/pmic.c` asserts the rail itself: probe chip ID `0x03` (expect `0x4A`,
 some dies report `0x47`), set `0x92[4:0] = 0x1C` (3.3 V), set `0x90` bit 0.
 
+**Measured on real hardware, the rail is already up:**
+
+```
+pmic: AXP2101 found, chip id 0x4A
+pmic: 0x90 = 0xFF    ALDO1=1 ALDO2=1 ALDO3=1 ALDO4=1
+pmic: 0x92 = 0x1C    (3300 mV)
+```
+
+Both before and after our write. So on this board the write is a no-op, and the
+schematic's warning turned out to be theoretical. It stays because it costs
+nothing, it verifies the chip, it dumps the rails when the microphone misbehaves,
+and it would rescue a unit whose power-on defaults differ. The read-modify-write
+discipline is what made a pointless write harmless rather than a brownout.
+
 **Registers that must never be blind-written:**
 
 | Register | Why |
@@ -103,6 +117,43 @@ Consequences:
 - A planned mitigation is an on-screen "Firmware Update" button that writes
   `RTC_CNTL_FORCE_DOWNLOAD_BOOT` in `RTC_CNTL_OPTION1_REG` and reboots
   straight into download mode, turning a hardware ritual into a tap.
+
+## Two ways this board bites during boot
+
+**The touch controller NACKs if you rush it.** Bring the display up the instant
+power arrives and `esp_lcd_touch_new_i2c_ft5x06()` fails with an I2C NACK. The
+BSP wraps that in `ESP_ERROR_CHECK`, so the whole application aborts and
+reboots; it survives the warm retry, which is what makes it look random.
+
+The driver hints at the cause first:
+
+```
+W i2c.master: Please check pull-up resistances whether be connected properly.
+E i2c.master: I2C hardware NACK detected
+E FT5x06: Touch controller FT5x06 initialization failed!
+abort() ... Rebooting...
+```
+
+`app_main()` therefore settles for 200 ms, brings up I2C and the PMIC, and only
+then starts the display. The shared bus also runs at **100 kHz**, not 400
+(`CONFIG_BSP_I2C_FAST_MODE=n`). Nothing on it — PMIC, expander, codec, touch —
+needs the speed.
+
+**The BSP's default LVGL buffer is slow enough to trip the watchdog.**
+`bsp_display_start()` asks for 20 rows in PSRAM with `buff_dma = false`. The SPI
+driver then bounces every flush through an internal DMA buffer, and with a
+nearly-full internal heap one screen took **twelve seconds** to paint:
+
+```
+E task_wdt: IDLE0 did not reset the watchdog ... CPU 0: taskLVGL
+I ui: ui up                                     <- 12.5 s after backlight on
+E ui: could not lock display for setup screen
+```
+
+Use `bsp_display_start_with_config()` with `buff_dma = true`,
+`buff_spiram = false` and a larger buffer. See `display_start()` in
+`main/app_main.c`. Wi-Fi and lwIP buffers move to PSRAM to pay for the internal
+memory, which is safe precisely because the display no longer touches PSRAM.
 
 ## Audio
 

@@ -41,6 +41,12 @@ static uint16_t aldo_code_to_mv(uint8_t code) { return (uint16_t)(500u + (code &
 
 static i2c_master_dev_handle_t s_dev;
 
+/* Called twice on purpose: once from app_main() before the display comes up,
+ * so the rails and the I2C bus have settled, and once as the state machine's
+ * first action so the UI can report the result. */
+static bool s_done;
+static pmic_status_t s_status;
+
 static esp_err_t reg_read(uint8_t reg, uint8_t *val)
 {
     return i2c_master_transmit_receive(s_dev, &reg, 1, val, 1, I2C_TIMEOUT_MS);
@@ -88,6 +94,12 @@ static void dump_rails(const char *when)
 
 esp_err_t pmic_init(pmic_status_t *out)
 {
+    if (s_done) {
+        if (out != NULL) {
+            *out = s_status;
+        }
+        return s_status.present ? ESP_OK : ESP_ERR_NOT_FOUND;
+    }
     if (out != NULL) {
         *out = (pmic_status_t){0};
     }
@@ -129,11 +141,15 @@ esp_err_t pmic_init(pmic_status_t *out)
     ESP_RETURN_ON_ERROR(reg_read(REG_LDO_ONOFF0, &ldo), TAG, "verify enable");
     ESP_RETURN_ON_ERROR(reg_read(REG_ALDO1_VOL, &vol), TAG, "verify voltage");
 
+    s_status = (pmic_status_t){
+        .present  = true,
+        .chip_id  = id,
+        .aldo1_on = (ldo & ALDO1_EN_BIT) != 0,
+        .aldo1_mv = aldo_code_to_mv(vol),
+    };
+    s_done = true;
     if (out != NULL) {
-        out->present   = true;
-        out->chip_id   = id;
-        out->aldo1_on  = (ldo & ALDO1_EN_BIT) != 0;
-        out->aldo1_mv  = aldo_code_to_mv(vol);
+        *out = s_status;
     }
     ESP_LOGI(TAG, "ALDO1 (codec + mic analog): %s @ %u mV",
              (ldo & ALDO1_EN_BIT) ? "on" : "OFF", aldo_code_to_mv(vol));
