@@ -4,7 +4,8 @@
 static sm_guards_t all_ready(void)
 {
     sm_guards_t g = {
-        .provisioned = true, .wifi_up = true, .time_ok = true, .usb_mounted = true,
+        .provisioned = true, .wifi_up = true, .time_ok = true, .time_required = true,
+        .usb_mounted = true,
         .clip_usable = true, .has_pending = true, .wifi_retries = 0,
     };
     return g;
@@ -90,6 +91,18 @@ TEST_MAIN("sm", {
     o = sm_step(ST_WIFI_CONNECTING, EV_WIFI_UP, &g);
     CHECK_EQ_INT(o.next, ST_TIME_SYNC);
     CHECK(o.actions & ACT_SNTP_START);
+
+    /* A trusted local HTTP endpoint is useful without internet access. It
+     * must not wait forever for a clock it does not need. */
+    g.time_required = false;
+    g.time_ok = false;
+    o = sm_step(ST_WIFI_CONNECTING, EV_WIFI_UP, &g);
+    CHECK_EQ_INT(o.next, ST_IDLE_READY);
+    CHECK_EQ_INT(o.actions, ACT_NONE);
+    o = sm_step(ST_IDLE_READY, EV_BTN_PRESS, &g);
+    CHECK_EQ_INT(o.next, ST_RECORDING);
+    g.time_required = true;
+    g.time_ok = true;
 
     /* Wi-Fi retries back off, then give up. A failed association arrives as
      * EV_WIFI_DOWN, not EV_TIMEOUT, so both must drive the ladder — otherwise

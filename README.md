@@ -1,13 +1,15 @@
 # TapTalk Keyboard
 
-**Hold a button. Speak. Let go.** The words are typed into whatever computer the
-board is plugged into — because the board pretends to be a USB keyboard.
+**Hold a button. Speak. Let go.** TapTalk turns the final transcript into USB
+keystrokes. To the connected host, it is simply a standard USB keyboard.
 
 ### [→ Install it from your browser](https://jrfferreira.github.io/taptalk-keyboard/)
 
 No toolchain, no command line. Chrome or Edge, a USB-C data cable, about a
-minute. Nothing is baked into the firmware; you configure Wi-Fi and your API key
-on the device afterwards.
+minute. After setup, there is no driver, desktop app, browser tab, or companion
+software on the computer: plug it into any host that accepts a standard USB
+keyboard and it types there. Configure Wi-Fi and your own transcription endpoint
+(plus an API key when it needs one) on the device.
 
 ---
 
@@ -36,13 +38,28 @@ title.
 
 ```
 hold the on-screen button   →  16 kHz mono WAV into PSRAM
-release                     →  multipart HTTPS POST to OpenAI
+release                     →  multipart HTTP(S) POST to a transcription endpoint
 transcript comes back       →  typed as USB HID keystrokes
 ```
 
 It types only after the final transcript arrives. Streaming speech-to-text
 revises its guesses, and a keyboard cannot take a word back without a volley of
 backspaces.
+
+## Your transcription, your choice
+
+TapTalk is not tied to an account or a hosted service. Its setup screen accepts
+any OpenAI-compatible `POST /v1/audio/transcriptions` endpoint, model name, an
+optional language, and an optional bearer key.
+
+- Use the included OpenAI default with your own key.
+- Point it at a compatible provider.
+- Point it at your own server on your LAN; a local server can omit the key.
+
+The ESP32 records and sends the audio, then behaves as a keyboard. It does not
+run a general-purpose speech-to-text model itself. See
+[docs/custom-endpoints.md](docs/custom-endpoints.md) for the exact request
+format and local-network security guidance.
 
 ## Setup
 
@@ -51,16 +68,18 @@ it raises its own Wi-Fi network and shows a QR code.
 
 1. Scan the QR code, or join `TapTalk-XXXX` with the eight-digit password on
    screen. That password is regenerated from the hardware RNG every boot.
-2. A setup page opens by itself. Enter your Wi-Fi and paste an OpenAI API key.
-3. The device saves both and restarts.
+2. A setup page opens by itself. Enter your Wi-Fi, transcription endpoint,
+   model, and (if required) API key.
+3. The device saves the settings and restarts.
 
 Tap the **Wi-Fi icon** (top-right of the main screen) to reopen this page later,
 to change your details, or to erase them.
 
 > [!WARNING]
-> The API key is stored **unencrypted**. Sixty seconds with the board and a USB
-> cable is enough to read it back. Use a project-scoped key with a spend limit,
-> and erase it before the board leaves your hands.
+> The endpoint and API key are stored **unencrypted**. Sixty seconds with the
+> board and a USB cable is enough to read them back. Use a dedicated, limited
+> key where your service requires one, and erase it before the board leaves your
+> hands.
 > [docs/security.md](docs/security.md) explains the trade-off rather than
 > pretending it away.
 
@@ -75,8 +94,10 @@ typed into the host.**
 | PMIC, Wi-Fi, SNTP, microphone capture | ✅ on hardware |
 | Setup portal (SoftAP + captive portal) | ✅ on hardware |
 | Transcription over HTTPS (multipart, OpenAI) | ✅ on hardware |
+| Configurable OpenAI-compatible endpoint | ✅ implemented; hardware validation pending |
 | USB HID typing, composite with a CDC console | ✅ on hardware |
 | Browser installer | ✅ works |
+| Driver or companion software on the host | ✅ none required |
 | Confirmation beeps, diagnostics heartbeat | ⚠️ shipped, not yet re-tested on the board |
 | Brazilian ABNT2 keyboard layout | ❌ not started |
 
@@ -138,7 +159,7 @@ components/core/   pure C, no esp_* headers, host-testable
 
 main/              hardware. app_sm.c runs the actions sm.c returns.
   pmic.c           AXP2101; the BSP never touches it
-  config_store.c   credentials in NVS, plaintext (see docs/security.md)
+  config_store.c   Wi-Fi and transcription settings in NVS, plaintext (see docs/security.md)
   provisioning.c   SoftAP + captive portal + form
   audio_capture.c  16 kHz mono into one static PSRAM clip
   stt_client.c     streams multipart straight out of PSRAM; never copies the WAV

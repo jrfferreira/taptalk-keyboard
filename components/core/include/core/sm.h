@@ -58,6 +58,7 @@ typedef struct {
     bool provisioned; /* NVS holds an SSID */
     bool wifi_up;
     bool time_ok;
+    bool time_required; /* HTTPS needs a valid clock; LAN HTTP does not */
     bool usb_mounted;
     bool clip_usable; /* long enough, and not silence */
     bool has_pending; /* a dictation was just typed and can be sent or undone */

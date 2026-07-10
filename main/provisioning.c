@@ -26,8 +26,9 @@ static const char *TAG = "prov";
 #define AP_MAX_CONN 2
 #define AP_IP "192.168.4.1"
 #define DNS_PORT 53
-/* ssid + pass + key, url-encoded worst case, plus field names. */
-#define MAX_BODY 1400
+/* Every form value may expand to %XX. The endpoint and provider key are the
+ * largest fields, so leave enough room to reject overlong values cleanly. */
+#define MAX_BODY 2300
 
 static httpd_handle_t s_httpd;
 
@@ -74,10 +75,24 @@ static const char PAGE_FORM[] =
     "autocorrect=off spellcheck=false>"
     "<button type=button class=ghost id=tp>Show</button></div>"
 
-    "<label for=key>OpenAI API key</label>"
+    "<label for=url>Transcription endpoint</label>"
+    "<input id=url name=url type=url required autocapitalize=off autocorrect=off "
+    "spellcheck=false value='https://api.openai.com/v1/audio/transcriptions'>"
+    "<p class=help>Use an OpenAI-compatible <code>/v1/audio/transcriptions</code> endpoint. "
+    "A local HTTP endpoint is allowed, but only use HTTP on a trusted LAN.</p>"
+
+    "<label for=model>Model</label>"
+    "<input id=model name=model required autocapitalize=off autocorrect=off "
+    "spellcheck=false value='gpt-4o-mini-transcribe'>"
+
+    "<label for=lang>Language (optional)</label>"
+    "<input id=lang name=lang maxlength=15 autocapitalize=off autocorrect=off "
+    "spellcheck=false placeholder='auto, en, pt, ...'>"
+
+    "<label for=key>API key (optional for local servers)</label>"
     "<div class=row>"
     "<input id=key name=key type=password autocomplete=off autocapitalize=off autocorrect=off "
-    "spellcheck=false placeholder='sk-\xe2\x80\xa6 (optional for now)'>"
+    "spellcheck=false placeholder='sk-\xe2\x80\xa6'>"
     "<button type=button class=ghost id=tk>Show</button></div>"
 
     /* What the on-screen Send button strikes. The value is the send_key_t index,
@@ -93,8 +108,8 @@ static const char PAGE_FORM[] =
     "<button type=submit>Save and restart</button></form>"
     "<form method=POST action=/erase>"
     "<button type=submit class=danger>Erase stored credentials</button></form>"
-    "<small>The API key is stored unencrypted. Anyone with this board and a USB "
-    "cable can read it. Erase it before lending the device.</small>"
+    "<small>The API key and endpoint are stored unencrypted. Anyone with this board and a USB "
+    "cable can read them. Erase them before lending the device.</small>"
 
     "<script>"
     "var sel=document.getElementById('netsel'),ssid=document.getElementById('ssid'),"
@@ -283,6 +298,26 @@ static esp_err_t read_body(httpd_req_t *req, char *buf, size_t cap, size_t *out_
     return ESP_OK;
 }
 
+/* Multipart fields are emitted verbatim. Keep user-provided strings to visible
+ * ASCII so a CR/LF cannot add a field or header, and URLs cannot be malformed
+ * into a surprising request. */
+static bool printable_ascii(const char *s)
+{
+    for (; *s; s++) {
+        if ((unsigned char)*s < 0x21 || (unsigned char)*s > 0x7e) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool valid_stt_url(const char *url)
+{
+    return printable_ascii(url) &&
+           (strncmp(url, "https://", 8) == 0 || strncmp(url, "http://", 7) == 0) &&
+           strchr(url, '@') == NULL;
+}
+
 static esp_err_t post_save(httpd_req_t *req)
 {
     char body[MAX_BODY];
@@ -300,6 +335,9 @@ static esp_err_t post_save(httpd_req_t *req)
     const int nssid = form_get(body, len, "ssid", cfg.wifi_ssid, sizeof(cfg.wifi_ssid));
     const int npass = form_get(body, len, "pass", cfg.wifi_pass, sizeof(cfg.wifi_pass));
     const int nkey  = form_get(body, len, "key", cfg.api_key, sizeof(cfg.api_key));
+    const int nurl = form_get(body, len, "url", cfg.stt_url, sizeof(cfg.stt_url));
+    const int nmodel = form_get(body, len, "model", cfg.stt_model, sizeof(cfg.stt_model));
+    const int nlang = form_get(body, len, "lang", cfg.stt_language, sizeof(cfg.stt_language));
 
     /* One digit of send_key_t. A missing or bogus value falls back to Enter,
      * which is what cfg was zeroed to -- a bad dropdown must not block saving
@@ -321,8 +359,15 @@ static esp_err_t post_save(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Wi-Fi network is required");
         return ESP_OK;
     }
-    if (npass == FORMDEC_BAD || nkey == FORMDEC_BAD) {
+    if (npass == FORMDEC_BAD || nkey == FORMDEC_BAD || nurl == FORMDEC_BAD ||
+        nmodel == FORMDEC_BAD || nlang == FORMDEC_BAD) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "value too long or malformed");
+        return ESP_OK;
+    }
+    if (nurl <= 0 || nmodel <= 0 || !valid_stt_url(cfg.stt_url) ||
+        !printable_ascii(cfg.stt_model) || !printable_ascii(cfg.stt_language)) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                            "enter an HTTP(S) endpoint and a valid model name");
         return ESP_OK;
     }
 
