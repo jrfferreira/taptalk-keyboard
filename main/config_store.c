@@ -13,6 +13,9 @@ static const char *TAG = "config";
 #define K_SSID "ssid"
 #define K_PASS "pass"
 #define K_KEY  "apikey"
+#define K_STT_URL "stt_url"
+#define K_STT_MODEL "stt_model"
+#define K_STT_LANG "stt_lang"
 
 /* Optional developer convenience: if main/secrets.h exists it seeds NVS on
  * first boot, so a bench build skips the portal. It is gitignored and must
@@ -50,6 +53,9 @@ esp_err_t config_load(app_config_t *cfg)
         ESP_RETURN_ON_ERROR(get_str(h, K_SSID, cfg->wifi_ssid, sizeof(cfg->wifi_ssid)), TAG, "ssid");
         ESP_RETURN_ON_ERROR(get_str(h, K_PASS, cfg->wifi_pass, sizeof(cfg->wifi_pass)), TAG, "pass");
         ESP_RETURN_ON_ERROR(get_str(h, K_KEY, cfg->api_key, sizeof(cfg->api_key)), TAG, "apikey");
+        ESP_RETURN_ON_ERROR(get_str(h, K_STT_URL, cfg->stt_url, sizeof(cfg->stt_url)), TAG, "stt url");
+        ESP_RETURN_ON_ERROR(get_str(h, K_STT_MODEL, cfg->stt_model, sizeof(cfg->stt_model)), TAG, "stt model");
+        ESP_RETURN_ON_ERROR(get_str(h, K_STT_LANG, cfg->stt_language, sizeof(cfg->stt_language)), TAG, "stt language");
         nvs_close(h);
     }
 
@@ -68,7 +74,9 @@ esp_err_t config_load(app_config_t *cfg)
 
     char masked[24];
     config_mask_key(cfg->api_key, masked, sizeof(masked));
-    ESP_LOGI(TAG, "ssid=%s api_key=%s", cfg->wifi_ssid[0] ? cfg->wifi_ssid : "<unset>", masked);
+    ESP_LOGI(TAG, "ssid=%s stt_url=%s stt_model=%s language=%s api_key=%s",
+             cfg->wifi_ssid[0] ? cfg->wifi_ssid : "<unset>", config_stt_url(cfg),
+             config_stt_model(cfg), cfg->stt_language[0] ? cfg->stt_language : "<auto>", masked);
     return ESP_OK;
 }
 
@@ -80,6 +88,9 @@ esp_err_t config_save(const app_config_t *cfg)
     esp_err_t err = nvs_set_str(h, K_SSID, cfg->wifi_ssid);
     if (err == ESP_OK) err = nvs_set_str(h, K_PASS, cfg->wifi_pass);
     if (err == ESP_OK) err = nvs_set_str(h, K_KEY, cfg->api_key);
+    if (err == ESP_OK) err = nvs_set_str(h, K_STT_URL, cfg->stt_url);
+    if (err == ESP_OK) err = nvs_set_str(h, K_STT_MODEL, cfg->stt_model);
+    if (err == ESP_OK) err = nvs_set_str(h, K_STT_LANG, cfg->stt_language);
     if (err == ESP_OK) err = nvs_commit(h);
 
     nvs_close(h);
@@ -89,7 +100,21 @@ esp_err_t config_save(const app_config_t *cfg)
 }
 
 bool config_is_provisioned(const app_config_t *cfg) { return cfg->wifi_ssid[0] != '\0'; }
-bool config_has_api_key(const app_config_t *cfg) { return cfg->api_key[0] != '\0'; }
+
+const char *config_stt_url(const app_config_t *cfg)
+{
+    return cfg->stt_url[0] ? cfg->stt_url : CONFIG_DEFAULT_STT_URL;
+}
+
+const char *config_stt_model(const app_config_t *cfg)
+{
+    return cfg->stt_model[0] ? cfg->stt_model : CONFIG_DEFAULT_STT_MODEL;
+}
+
+bool config_stt_uses_tls(const app_config_t *cfg)
+{
+    return strncmp(config_stt_url(cfg), "https://", 8) == 0;
+}
 
 esp_err_t config_erase(void)
 {

@@ -16,10 +16,6 @@
 
 static const char *TAG = "stt";
 
-#define STT_URL "https://api.openai.com/v1/audio/transcriptions"
-/* Cheapest and lowest latency of the transcription models, and unlike
- * whisper-1 it returns empty text on silence rather than inventing a sentence. */
-#define STT_MODEL "gpt-4o-mini-transcribe"
 /* Generous: a 30 s clip has to upload over Wi-Fi before the server even starts.
  * The esp_http_client default of 5 s would time out on nearly every request. */
 #define STT_TIMEOUT_MS 60000
@@ -31,6 +27,9 @@ static char s_error[64];
 static volatile bool s_abort;
 
 static const char *s_key;
+static const char *s_url;
+static const char *s_model;
+static const char *s_language;
 static const uint8_t *s_wav;
 static size_t s_wav_len;
 
@@ -76,14 +75,15 @@ static void stt_task(void *arg)
              (unsigned long)esp_random());
 
     multipart_t mp;
-    if (!multipart_build(&mp, boundary, STT_MODEL, "text", NULL, "audio.wav", s_wav_len)) {
+    if (!multipart_build(&mp, boundary, s_model, "text",
+                         s_language[0] ? s_language : NULL, "audio.wav", s_wav_len)) {
         fail("Request too large");
         vTaskDelete(NULL);
         return;
     }
 
     const esp_http_client_config_t cfg = {
-        .url               = STT_URL,
+        .url               = s_url,
         .method            = HTTP_METHOD_POST,
         .timeout_ms        = STT_TIMEOUT_MS,
         /* The full Mozilla root bundle. api.openai.com chains to GTS Root R4,
@@ -99,17 +99,19 @@ static void stt_task(void *arg)
         return;
     }
 
-    char auth[CONFIG_API_KEY_CAP + 16]; /* "Bearer " + key + NUL */
-    snprintf(auth, sizeof(auth), "Bearer %s", s_key);
-    esp_http_client_set_header(c, "Authorization", auth);
-    /* The header is copied into the client; do not leave a second copy of the
-     * key sitting on this task's stack. */
-    memset(auth, 0, sizeof(auth));
+    if (s_key[0]) {
+        char auth[CONFIG_API_KEY_CAP + 16]; /* "Bearer " + key + NUL */
+        snprintf(auth, sizeof(auth), "Bearer %s", s_key);
+        esp_http_client_set_header(c, "Authorization", auth);
+        /* The header is copied into the client; do not leave a second copy of
+         * the key sitting on this task's stack. */
+        memset(auth, 0, sizeof(auth));
+    }
 
     esp_http_client_set_header(c, "Content-Type", mp.content_type);
 
-    ESP_LOGI(TAG, "POST %u bytes of audio (%u total)", (unsigned)s_wav_len,
-             (unsigned)mp.content_length);
+    ESP_LOGI(TAG, "POST %u bytes of audio to %s using %s (%u total)", (unsigned)s_wav_len,
+             s_url, s_model, (unsigned)mp.content_length);
 
     esp_err_t err = esp_http_client_open(c, (int)mp.content_length);
     if (err != ESP_OK) {
@@ -173,11 +175,11 @@ done:
     vTaskDelete(NULL);
 }
 
-esp_err_t stt_start(const char *api_key, const uint8_t *wav, size_t wav_len)
+esp_err_t stt_start(const app_config_t *config, const uint8_t *wav, size_t wav_len)
 {
-    if (api_key == NULL || api_key[0] == '\0') {
-        snprintf(s_error, sizeof(s_error), "No API key");
-        return ESP_ERR_INVALID_STATE;
+    if (config == NULL) {
+        snprintf(s_error, sizeof(s_error), "No transcription settings");
+        return ESP_ERR_INVALID_ARG;
     }
     if (wav == NULL || wav_len == 0) {
         snprintf(s_error, sizeof(s_error), "Empty recording");
@@ -185,7 +187,10 @@ esp_err_t stt_start(const char *api_key, const uint8_t *wav, size_t wav_len)
     }
 
     s_abort   = false;
-    s_key     = api_key;
+    s_key     = config->api_key;
+    s_url     = config_stt_url(config);
+    s_model   = config_stt_model(config);
+    s_language = config->stt_language;
     s_wav     = wav;
     s_wav_len = wav_len;
 
