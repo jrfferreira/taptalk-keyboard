@@ -92,3 +92,9 @@ typedef struct {
 sm_out_t sm_step(app_state_t state, app_event_t event, const sm_guards_t *guards);
 
 const char *sm_state_name(app_state_t state);
+
+/* A transition logged as "IDLE_READY --10--> UPLOADING" costs a trip to this
+ * header to decode. Named, it reads "IDLE_READY --REC_MAX--> UPLOADING", and
+ * the fact that a 30-second cap fired rather than a finger lifting is right
+ * there in the line. */
+const char *sm_event_name(app_event_t event);

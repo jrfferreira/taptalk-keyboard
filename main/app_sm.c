@@ -2,6 +2,7 @@
 
 #include "audio_capture.h"
 #include "beeper.h"
+#include "diagnostics.h"
 #include "hid_kbd.h"
 #include "stt_client.h"
 #include "config_store.h"
@@ -154,6 +155,7 @@ static void sm_task(void *arg)
 
     for (;;) {
         app_event_t ev;
+        diag_beat_sm();
         if (xQueueReceive(s_queue, &ev, pdMS_TO_TICKS(TICK_MS)) != pdTRUE) {
             /* Idle tick. No enumerated host means nothing to type into, so
              * recording is pointless and the USB icon must say so. */
@@ -193,8 +195,9 @@ static void sm_task(void *arg)
         const sm_out_t out  = sm_step(s_state, ev, &g);
 
         if (out.next != s_state || out.actions != ACT_NONE) {
-            ESP_LOGI(TAG, "%s --%d--> %s (actions 0x%04x)", sm_state_name(s_state), (int)ev,
-                     sm_state_name(out.next), (unsigned)out.actions);
+            ESP_LOGI(TAG, "%s --%s--> %s (actions 0x%04x) [wifi=%d time=%d usb=%d clip=%d]",
+                     sm_state_name(s_state), sm_event_name(ev), sm_state_name(out.next),
+                     (unsigned)out.actions, g.wifi_up, g.time_ok, g.usb_mounted, g.clip_usable);
         }
 
         s_state = out.next;

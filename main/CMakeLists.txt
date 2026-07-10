@@ -8,6 +8,7 @@ idf_component_register(
         "ui.c"
         "audio_capture.c"
         "beeper.c"
+        "diagnostics.c"
         "net_wifi.c"
         "stt_client.c"
         "hid_kbd.c"
