@@ -62,9 +62,3 @@ CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y
 CONFIG_LV_COLOR_DEPTH_16=y
 CONFIG_LV_FONT_MONTSERRAT_28=y
 CONFIG_LV_USE_QRCODE=y
-
-# The shared I2C bus carries the PMIC, the IO expander, the codec and the touch
-# controller. At 400 kHz the FT3168 NACKs on a cold boot -- the driver even
-# warns about pull-up strength -- and the BSP turns that into an abort(). The
-# bus is not a bottleneck for any of these devices.
-CONFIG_BSP_I2C_FAST_MODE=n

@@ -20,6 +20,8 @@
 #include "esp_app_desc.h"
 #include "esp_err.h"
 #include "esp_heap_caps.h"
+#include "driver/i2c_master.h"
+#include "esp_io_expander.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -42,6 +44,78 @@ static const char *TAG = "main";
  * starved the idle task into a watchdog reset, and held the LVGL lock so long
  * that the setup screen never drew. An internal DMA buffer removes the bounce. */
 #define LVGL_BUF_ROWS 40
+
+/* The FT3168's I2C address. The BSP hands it to esp_lcd_touch_ft5x06, which
+ * NACKs and gives up if the chip has not finished waking. */
+#define TOUCH_I2C_ADDR 0x38
+#define TOUCH_WAIT_STEP_MS 25
+#define TOUCH_WAIT_TOTAL_MS 1500
+
+/* TCA9554 P2 = TP_RESET, per the board schematic. P0 is LCD_RESET and P1 is
+ * DSI_PWR_EN; we never touch those, because getting them wrong blanks the panel
+ * and we only reach that code when something is already wrong. */
+#define TP_RESET_PIN IO_EXPANDER_PIN_NUM_2
+
+static bool touch_answers(i2c_master_bus_handle_t bus)
+{
+    return i2c_master_probe(bus, TOUCH_I2C_ADDR, TOUCH_WAIT_STEP_MS) == ESP_OK;
+}
+
+/* Wait for the touch controller to answer before the BSP tries to talk to it.
+ *
+ * BSP_LCD_TOUCH_RST is GPIO_NUM_NC on this board -- the reset line hangs off
+ * the TCA9554 -- so the BSP neither resets the chip nor waits for it. On a cold
+ * boot it NACKs, and bsp_display_indev_init() turns that into abort(), so the
+ * board reboots forever. Probing first turns a crash loop into a short wait. */
+static void wait_for_touch(void)
+{
+    i2c_master_bus_handle_t bus = bsp_i2c_get_handle();
+
+    /* i2c_master_probe logs an error on every NACK. Silence it, or the wait
+     * buries the log in the very noise it exists to avoid. */
+    esp_log_level_set("i2c.master", ESP_LOG_NONE);
+
+    const int attempts = TOUCH_WAIT_TOTAL_MS / TOUCH_WAIT_STEP_MS;
+    for (int i = 0; i < attempts; i++) {
+        if (touch_answers(bus)) {
+            esp_log_level_set("i2c.master", ESP_LOG_INFO);
+            ESP_LOGI(TAG, "touch controller ready after %d ms", i * TOUCH_WAIT_STEP_MS);
+            return;
+        }
+        vTaskDelay(pdMS_TO_TICKS(TOUCH_WAIT_STEP_MS));
+    }
+
+    /* Still silent. Release its reset through the expander -- the one thing the
+     * BSP will never do for us. Only attempted once the chip has already failed
+     * to answer, so a wrong guess about the pin cannot make a working board
+     * worse. */
+    ESP_LOGW(TAG, "touch silent after %d ms; pulsing TP_RESET via the expander",
+             TOUCH_WAIT_TOTAL_MS);
+    esp_io_expander_handle_t exp = bsp_io_expander_init();
+    if (exp != NULL && esp_io_expander_set_dir(exp, TP_RESET_PIN, IO_EXPANDER_OUTPUT) == ESP_OK) {
+        esp_io_expander_set_level(exp, TP_RESET_PIN, 0);
+        vTaskDelay(pdMS_TO_TICKS(20));
+        esp_io_expander_set_level(exp, TP_RESET_PIN, 1);
+        vTaskDelay(pdMS_TO_TICKS(200));
+
+        if (touch_answers(bus)) {
+            esp_log_level_set("i2c.master", ESP_LOG_INFO);
+            ESP_LOGI(TAG, "touch controller answered after a reset pulse");
+            return;
+        }
+    }
+
+    esp_log_level_set("i2c.master", ESP_LOG_INFO);
+    /* We cannot save it from here. bsp_display_indev_init() will call abort().
+     *
+     * CONFIG_BSP_ERROR_CHECK=n would make that a plain return, but it does not
+     * compile: with the option off, the BSP's own bsp_io_expander_init()
+     * returns an esp_err_t from a function declared to return a pointer. So the
+     * best we can do is say plainly what is about to happen, in the line just
+     * above the panic, rather than leave a reboot loop to be guessed at. */
+    ESP_LOGE(TAG, "touch controller never answered at 0x%02X -- the BSP is about "
+                  "to abort. The board will reboot.", TOUCH_I2C_ADDR);
+}
 
 static void display_start(void)
 {
@@ -75,6 +149,8 @@ void app_main(void)
         ESP_LOGE(TAG, "PMIC not found; continuing, but the microphone may be silent");
     }
 
+    wait_for_touch();
+
     display_start();
     ESP_LOGI(TAG, "internal heap after display: %u KB",
              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
@@ -95,7 +171,7 @@ void app_main(void)
     const esp_err_t err = audio_capture_start();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "audio bring-up failed: %s", esp_err_to_name(err));
-        ui_set_msg("Microphone error");
+        ui_set_error("Microphone error");
     }
 
     /* Last, and deliberately so: this is the line that costs us the

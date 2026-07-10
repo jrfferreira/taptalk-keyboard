@@ -37,6 +37,7 @@ static const char *TAG = "ui";
 #define C_ON       0x3DDC97
 #define C_OFF      0x39434D
 #define C_MSG      0xF5B638
+#define C_STATUS   0x8A97A3
 
 typedef struct {
     app_state_t state;
@@ -44,15 +45,17 @@ typedef struct {
     uint32_t clip_ms;
     bool wifi;
     bool usb;
-    char msg[48];
+    char msg[80];
+    bool msg_is_error;
 } ui_model_t;
 
 static ui_model_t s_model;
 static SemaphoreHandle_t s_lock;
 
 static lv_obj_t *s_main, *s_setup;
-static lv_obj_t *s_btn, *s_timer, *s_msg;
-static lv_obj_t *s_ico_usb, *s_ico_wifi;
+static lv_obj_t *s_btn, *s_timer, *s_status;
+static lv_obj_t *s_ico_usb, *s_ico_wifi, *s_badge, *s_badge_hit;
+static lv_obj_t *s_sheet, *s_sheet_text;
 static lv_obj_t *s_wave[WAVE_BARS];
 
 /* Rolling level history, oldest first. Shifting it each tick is what makes
@@ -80,12 +83,17 @@ void ui_set_clip(uint32_t ms, int peak)
     MODEL_SET(clip_ms, ms);
 }
 
-void ui_set_msg(const char *msg)
+static void set_msg(const char *text, bool is_error)
 {
     model_lock();
-    snprintf(s_model.msg, sizeof(s_model.msg), "%s", msg != NULL ? msg : "");
+    snprintf(s_model.msg, sizeof(s_model.msg), "%s", text != NULL ? text : "");
+    s_model.msg_is_error = is_error && s_model.msg[0] != '\0';
     model_unlock();
 }
+
+void ui_set_status(const char *text) { set_msg(text, false); }
+void ui_set_error(const char *text) { set_msg(text, true); }
+void ui_clear_msg(void) { set_msg("", false); }
 
 /* ------------------------------------------------------------------ paint */
 
@@ -169,15 +177,44 @@ static void ui_tick(lv_timer_t *timer)
         lv_obj_set_style_text_color(s_ico_usb, lv_color_hex(m.usb ? C_ON : C_OFF), LV_PART_MAIN);
     }
 
-    if (strcmp(m.msg, last_msg) != 0) {
+    static bool last_was_error = false;
+    if (strcmp(m.msg, last_msg) != 0 || m.msg_is_error != last_was_error) {
         snprintf(last_msg, sizeof(last_msg), "%s", m.msg);
-        if (m.msg[0] != '\0') {
-            lv_label_set_text(s_msg, m.msg);
-            lv_obj_remove_flag(s_msg, LV_OBJ_FLAG_HIDDEN);
+        last_was_error = m.msg_is_error;
+
+        const bool have = m.msg[0] != '\0';
+
+        /* An error becomes a badge you can tap, not a line of text that
+         * scrolls past. A status is just dim text. */
+        if (have && m.msg_is_error) {
+            lv_label_set_text(s_sheet_text, m.msg);
+            lv_obj_remove_flag(s_badge, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(s_badge_hit, LV_OBJ_FLAG_HIDDEN);
         } else {
-            lv_obj_add_flag(s_msg, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(s_badge, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(s_badge_hit, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(s_sheet, LV_OBJ_FLAG_HIDDEN); /* the error is gone */
+        }
+
+        if (have && !m.msg_is_error) {
+            lv_label_set_text(s_status, m.msg);
+            lv_obj_remove_flag(s_status, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_status, LV_OBJ_FLAG_HIDDEN);
         }
     }
+}
+
+static void sheet_open(lv_event_t *e)
+{
+    (void)e;
+    lv_obj_remove_flag(s_sheet, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void sheet_close(lv_event_t *e)
+{
+    (void)e;
+    lv_obj_add_flag(s_sheet, LV_OBJ_FLAG_HIDDEN);
 }
 
 /* LVGL event callbacks fire in the LVGL task. They only enqueue. */
@@ -237,6 +274,75 @@ static lv_obj_t *build_icon(lv_obj_t *parent, const char *sym, int32_t dx, lv_ev
     return lbl;
 }
 
+/* The badge sits at the top, alone, where nothing else competes for the eye.
+ * It is only ever visible when something is wrong. */
+static void build_badge(void)
+{
+    s_badge = lv_label_create(s_main);
+    lv_label_set_text(s_badge, LV_SYMBOL_WARNING);
+    lv_obj_set_style_text_font(s_badge, FONT_BIG, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_badge, lv_color_hex(C_MSG), LV_PART_MAIN);
+    lv_obj_align(s_badge, LV_ALIGN_TOP_MID, 0, 20);
+    lv_obj_add_flag(s_badge, LV_OBJ_FLAG_HIDDEN);
+
+    /* A 28 px glyph is not a touch target. */
+    s_badge_hit = lv_obj_create(s_main);
+    lv_obj_remove_style_all(s_badge_hit);
+    lv_obj_set_size(s_badge_hit, ICON_HIT, ICON_HIT);
+    lv_obj_align(s_badge_hit, LV_ALIGN_TOP_MID, 0, 6);
+    lv_obj_add_flag(s_badge_hit, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_badge_hit, sheet_open, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_flag(s_badge_hit, LV_OBJ_FLAG_HIDDEN);
+}
+
+/* Tapping the badge raises this. It is the only place the device tells you,
+ * in words, that the key was rejected or the account is out of credit. */
+static void build_sheet(void)
+{
+    s_sheet = lv_obj_create(s_main);
+    lv_obj_remove_style_all(s_sheet);
+    lv_obj_set_size(s_sheet, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(s_sheet, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_sheet, LV_OPA_70, LV_PART_MAIN);
+    lv_obj_remove_flag(s_sheet, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_sheet, LV_OBJ_FLAG_CLICKABLE); /* tap anywhere to dismiss */
+    lv_obj_add_event_cb(s_sheet, sheet_close, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_flag(s_sheet, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t *card = lv_obj_create(s_sheet);
+    lv_obj_set_size(card, 300, 200);
+    lv_obj_center(card);
+    lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_radius(card, 18, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(card, lv_color_hex(0x16202A), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(card, lv_color_hex(C_MSG), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(card, 18, LV_PART_MAIN);
+
+    lv_obj_t *head = lv_label_create(card);
+    lv_label_set_text(head, LV_SYMBOL_WARNING "  Something went wrong");
+    lv_obj_set_style_text_color(head, lv_color_hex(C_MSG), LV_PART_MAIN);
+    lv_obj_align(head, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    s_sheet_text = lv_label_create(card);
+    lv_label_set_long_mode(s_sheet_text, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(s_sheet_text, 260);
+    lv_obj_set_style_text_color(s_sheet_text, lv_color_hex(0xE8EDF2), LV_PART_MAIN);
+    lv_obj_align(s_sheet_text, LV_ALIGN_TOP_LEFT, 0, 34);
+    lv_label_set_text(s_sheet_text, "");
+
+    lv_obj_t *ok = lv_button_create(card);
+    lv_obj_set_size(ok, 110, 42);
+    lv_obj_align(ok, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_color(ok, lv_color_hex(0x2B3540), LV_PART_MAIN);
+    lv_obj_set_style_radius(ok, 10, LV_PART_MAIN);
+    lv_obj_add_event_cb(ok, sheet_close, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *okl = lv_label_create(ok);
+    lv_label_set_text(okl, "Dismiss");
+    lv_obj_center(okl);
+}
+
 static void build_main(void)
 {
     s_main = lv_obj_create(NULL);
@@ -289,14 +395,18 @@ static void build_main(void)
         s_wave[i] = b;
     }
 
-    s_msg = lv_label_create(s_main);
-    lv_obj_set_style_text_color(s_msg, lv_color_hex(C_MSG), LV_PART_MAIN);
-    lv_obj_align(s_msg, LV_ALIGN_BOTTOM_MID, 0, -66);
-    lv_obj_add_flag(s_msg, LV_OBJ_FLAG_HIDDEN);
+    /* Transient status: dim, small, easy to ignore. */
+    s_status = lv_label_create(s_main);
+    lv_obj_set_style_text_color(s_status, lv_color_hex(C_STATUS), LV_PART_MAIN);
+    lv_obj_align(s_status, LV_ALIGN_BOTTOM_MID, 0, -66);
+    lv_obj_add_flag(s_status, LV_OBJ_FLAG_HIDDEN);
 
     s_ico_usb  = build_icon(s_main, LV_SYMBOL_USB, -70, NULL);
     s_ico_wifi = build_icon(s_main, LV_SYMBOL_WIFI, 0, NULL);
     (void)build_icon(s_main, LV_SYMBOL_SETTINGS, 70, on_setup);
+
+    build_badge();
+    build_sheet();
 }
 
 void ui_show_setup(const prov_info_t *info)
