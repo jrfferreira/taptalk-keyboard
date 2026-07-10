@@ -1,13 +1,15 @@
-/* TapTalk Keyboard — chunk 1: board bring-up and first-run setup.
+/* TapTalk Keyboard.
  *
  * Boot order matters here. The PMIC runs first because ALDO1 feeds the codec's
  * analog rail; the display comes up before it only so the screen can narrate
  * what happens next. Audio comes last, since it needs the rail the PMIC just
  * asserted.
  *
- * No TinyUSB in this build. Installing it would hand the USB PHY to the OTG
- * controller and take the USB-Serial-JTAG console with it, leaving bring-up
- * blind. HID lands in chunk 2, once there is nothing left to watch. */
+ * TinyUSB comes up LAST. Installing it hands the USB PHY from the
+ * USB-Serial-JTAG controller to the OTG controller, so every log line up to
+ * that point arrives on the port you flashed from, and everything after it on
+ * the composite CDC interface. Reattach the monitor when the device
+ * re-enumerates. */
 #include "app_sm.h"
 #include "audio_capture.h"
 #include "bsp/esp-bsp.h"
@@ -16,6 +18,7 @@
 #include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "hid_kbd.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "net_wifi.h"
@@ -60,6 +63,10 @@ void app_main(void)
         ESP_LOGE(TAG, "audio bring-up failed: %s", esp_err_to_name(err));
         ui_set_msg("Microphone error");
     }
+
+    /* Last, and deliberately so: this is the line that costs us the
+     * USB-Serial-JTAG console. Everything worth watching has already logged. */
+    ESP_ERROR_CHECK(hid_kbd_start());
 
     ESP_LOGI(TAG, "boot complete, free heap %u KB",
              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));

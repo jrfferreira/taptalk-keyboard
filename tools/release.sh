@@ -8,7 +8,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-VERSION="0.1.0"
+VERSION="0.2.0"
 OUT="web/firmware/taptalk-v${VERSION}-esp32s3-v1-merged.bin"
 
 if [ -f main/secrets.h ]; then

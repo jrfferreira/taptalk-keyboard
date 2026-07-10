@@ -16,6 +16,7 @@ test/host/test_sm
 test/host/test_formdec
 test/host/test_dnsreply
 test/host/test_jsonesc
+test/host/test_typeplan
 test/host/gen_fixtures
 *.dSYM/
 

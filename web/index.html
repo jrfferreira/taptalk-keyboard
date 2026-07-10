@@ -147,15 +147,6 @@
   .beneath { color: var(--fg-faint); font-size: 13.5px; margin-top: 14px; }
   .beneath strong { color: var(--fg-dim); font-weight: 600; }
 
-  /* ---------------------------------------------------------------- specs */
-  .chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 30px 0 0; }
-  .chip {
-    font-size: 12.5px; color: var(--fg-dim);
-    background: var(--bg-elev); border: 1px solid var(--line-soft);
-    padding: 5px 11px; border-radius: 999px; white-space: nowrap;
-  }
-  .chip b { color: var(--fg); font-weight: 600; }
-
   /* ---------------------------------------------------------------- steps */
   section { padding: 56px 0 0; }
   h2 {
@@ -276,7 +267,7 @@
 <div class="wrap">
 
 <header>
-  <span class="eyebrow"><span class="dot"></span>Bring-up build · v0.1.0</span>
+  <span class="eyebrow"><span class="dot"></span>Bring-up build · v0.2.0</span>
   <h1>Speak.<br>It <span class="accent">types</span>.</h1>
   <p class="tagline">Hold the button, say your piece, let go. The words land wherever
   your cursor is — because the board pretends to be a keyboard.</p>
@@ -386,14 +377,6 @@
   <p class="beneath">Takes about a minute · Needs a <strong>USB-C data cable</strong> · Nothing is baked in, you configure it after</p>
 </div>
 
-<div class="chips" aria-label="Board specifications">
-  <span class="chip"><b>ESP32-S3</b> dual-core</span>
-  <span class="chip"><b>1.8"</b> AMOLED 368×448</span>
-  <span class="chip"><b>16 MB</b> flash</span>
-  <span class="chip"><b>8 MB</b> PSRAM</span>
-  <span class="chip"><b>ES8311</b> codec + mic</span>
-  <span class="chip"><b>Wi-Fi</b> + native USB</span>
-</div>
 
 <section>
   <h2>How it goes</h2>
@@ -490,20 +473,21 @@
 </section>
 
 <section class="status">
-  <h2>What this build actually does</h2>
+  <h2>What this build does</h2>
   <div class="card">
     <table>
       <tr><td>Display, touch, and the hold-to-talk screen</td><td class="yes">works</td></tr>
       <tr><td>Microphone capture, with a live level meter</td><td class="yes">works</td></tr>
       <tr><td>Wi-Fi, clock sync, and on-device setup</td><td class="yes">works</td></tr>
-      <tr><td>Sending audio away to be transcribed</td><td class="no">next</td></tr>
-      <tr><td>Typing the transcript as a USB keyboard</td><td class="no">next</td></tr>
+      <tr><td>Sending audio away to be transcribed</td><td class="yes">works</td></tr>
+      <tr><td>Typing the transcript as a USB keyboard</td><td class="yes">works</td></tr>
+      <tr><td>Portuguese ABNT2 keyboard layout</td><td class="no">next</td></tr>
     </table>
   </div>
   <p class="beneath" style="text-align:center">
-    It doesn't type yet. This build deliberately installs no USB keyboard stack —
-    doing so seizes the USB port and takes the serial console with it, which is
-    also the reason this one-click installer works today.
+    Accented characters are typed without their accents on a US layout — "ação"
+    arrives as "acao". A Portuguese layout is next. Emoji are skipped rather
+    than mangled.
   </p>
 </section>
 

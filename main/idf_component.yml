@@ -12,3 +12,8 @@ dependencies:
   # screen with no error. Check the sticker on the back of your board before
   # touching this constraint; see docs/hardware-v1.md.
   waveshare/esp32_s3_touch_amoled_1_8: "^1.1.4"
+
+  # Composite CDC + HID. Installing this takes the USB PHY from the
+  # USB-Serial-JTAG controller, which is why the console moves to the CDC
+  # interface and why reflashing then needs BOOT held while PWR is tapped.
+  espressif/esp_tinyusb: "^2.2"

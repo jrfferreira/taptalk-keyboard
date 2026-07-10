@@ -7,19 +7,23 @@ Firmware for the **Waveshare ESP32-S3-Touch-AMOLED-1.8 (V1)**. Read
 [docs/hardware-v1.md](docs/hardware-v1.md) before doing anything else — there
 are two incompatible board revisions sold under this name.
 
-## Status: chunk 1 — board bring-up
+## Status
 
 | | |
 |---|---|
 | Pure logic (WAV, keymap, multipart, form + DNS parsers, state machine) | done, unit + interop tested |
 | Wi-Fi / API-key setup via SoftAP captive portal | written, **compiles**, unverified on hardware |
 | PMIC, display, touch, LVGL, Wi-Fi, SNTP, mic capture | written, **compiles**, unverified on hardware |
-| STT upload | chunk 2 |
-| USB HID keyboard | chunk 2 |
-| Web flasher | later |
+| Transcription over HTTPS (multipart, OpenAI) | written, **compiles**, unverified on hardware |
+| USB HID keyboard typing, composite with a CDC console | written, **compiles**, unverified on hardware |
+| Web flasher | works |
+| Brazilian ABNT2 keyboard layout | not started |
 
-Nothing here has run on a physical board yet. The build is green and the
-host tests pass; that is all that is currently claimed.
+Board bring-up is confirmed on hardware: display, touch, Wi-Fi, SNTP, and the
+microphone all work (`audio: clip: 1820 ms, 58240 bytes, peak 789` — exactly
+32 KB/s, so 16 kHz mono, and a non-zero peak means the AXP2101's ALDO1 rail is
+powering the mic). Everything added since builds and passes host tests; none of
+it has been run on the board.
 
 ## Build
 

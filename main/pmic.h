@@ -28,8 +28,3 @@ typedef struct {
  * Returns ESP_ERR_NOT_FOUND if the chip does not answer, in which case no
  * write is attempted. */
 esp_err_t pmic_init(pmic_status_t *out);
-
-/* True while a USB cable is supplying VBUS. Read from the PMU rather than
- * guessed: with no TinyUSB in this build there is no tud_mounted() to ask,
- * and a status icon that is always green would be decoration, not status. */
-bool pmic_vbus_present(void);

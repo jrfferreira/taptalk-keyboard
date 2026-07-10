@@ -59,7 +59,7 @@ jobs:
           . "$IDF_PATH/export.sh"
           mkdir -p web/firmware
           esptool.py --chip esp32s3 merge_bin \
-            -o web/firmware/taptalk-v0.1.0-esp32s3-v1-merged.bin \
+            -o web/firmware/taptalk-v0.2.0-esp32s3-v1-merged.bin \
             --flash_mode dio --flash_freq 80m --flash_size 16MB \
             0x0     build/bootloader/bootloader.bin \
             0x8000  build/partition_table/partition-table.bin \

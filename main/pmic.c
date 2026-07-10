@@ -142,16 +142,3 @@ esp_err_t pmic_init(pmic_status_t *out)
     return ESP_OK;
 }
 
-#define STATUS1_VBUS_GOOD 0x20 /* bit 5 */
-
-bool pmic_vbus_present(void)
-{
-    if (s_dev == NULL) {
-        return false;
-    }
-    uint8_t v = 0;
-    if (reg_read(REG_STATUS1, &v) != ESP_OK) {
-        return false;
-    }
-    return (v & STATUS1_VBUS_GOOD) != 0;
-}

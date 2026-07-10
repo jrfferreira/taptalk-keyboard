@@ -8,12 +8,15 @@ idf_component_register(
         "ui.c"
         "audio_capture.c"
         "net_wifi.c"
+        "stt_client.c"
+        "hid_kbd.c"
     INCLUDE_DIRS "."
     REQUIRES
         core
         esp_wifi
         esp_netif
         esp_http_server
+        esp_http_client
         esp_app_format
         nvs_flash
         esp-tls
