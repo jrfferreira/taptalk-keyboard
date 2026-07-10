@@ -349,6 +349,27 @@
     border: 1px solid var(--line); border-radius: 10px; padding: 11px 18px;
     transition: border-color .12s ease, transform .12s ease;
   }
+  /* Deliberately quieter than the install button. Someone who already owns the
+     board must be able to skim straight past this. */
+  .buy-banner {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap;
+    margin: 8px 0 36px;
+    padding: 16px 18px;
+    border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--bg-elev);
+  }
+  /* Must be allowed to shrink, or its max-content width pushes the button
+     onto its own line at every viewport. */
+  .buy-banner .txt { flex: 1 1 260px; min-width: 0; }
+  .buy-banner b { display: block; color: var(--fg); font-size: 15px; }
+  .buy-banner span { display: block; margin-top: 3px; font-size: 13px; color: var(--fg-dim); }
+  .buy-banner .disclosure { margin: 6px 0 0 !important; }
+  @media (max-width: 560px) {
+    .buy-banner { flex-direction: column; align-items: stretch; }
+    .buy-banner a.buy { justify-content: center; }
+  }
+
   a.buy:hover { border-color: var(--mint); transform: translateY(-1px); }
   a.buy:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
   a.buy .ic { color: var(--fg-faint); }
@@ -506,6 +527,17 @@
 </div>
 
 
+<div class="buy-banner">
+  <div class="txt">
+    <b>Don't have the board yet?</b>
+    <span>Waveshare ESP32-S3-Touch-AMOLED-1.8 &mdash; it must be the <strong>V1</strong>. <a href="#v1">Why that matters</a>.</span>
+    <p class="disclosure">Affiliate link &mdash; I earn a small commission, at no extra cost to you.</p>
+  </div>
+  <a class="buy" href="https://s.click.aliexpress.com/e/_c349By9V" rel="nofollow sponsored noopener" target="_blank">
+    Buy on AliExpress
+    <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>
+  </a>
+</div>
 <section>
   <h2>How it goes</h2>
   <ol class="steps">
@@ -557,7 +589,7 @@
   <h2>Read this first</h2>
   <div class="cards two">
 
-    <div class="card warn">
+    <div class="card warn" id="v1">
       <h3>
         <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 9v5"/><path d="M12 17.5h.01"/><path d="M10.3 3.9 2.4 17.6A2 2 0 0 0 4.1 20.6h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
         You need a <em>V1</em> board
@@ -617,26 +649,6 @@
     arrives as "acao". A Portuguese layout is next. Emoji are skipped rather
     than mangled.
   </p>
-</section>
-
-<section>
-  <h2>Get the board</h2>
-  <div class="card">
-    <h3>
-      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M8 6V4h8v2"/></svg>
-      Waveshare ESP32-S3-Touch-AMOLED-1.8
-    </h3>
-    <p>The listing does not state its revision. When it arrives, check the sticker
-    on the back: it must say <code>SH8601</code> and <code>FT3168</code>. A V2 board
-    (<code>CO5300</code> / <code>CST816</code>) will not display this firmware.</p>
-    <p style="margin-top:16px">
-      <a class="buy" href="https://s.click.aliexpress.com/e/_c349By9V" rel="nofollow sponsored noopener" target="_blank">
-        Buy on AliExpress
-        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>
-      </a>
-    </p>
-    <p class="disclosure">Affiliate link — I earn a small commission, at no extra cost to you.</p>
-  </div>
 </section>
 
 <footer>
