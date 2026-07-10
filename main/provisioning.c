@@ -55,6 +55,9 @@ static const char PAGE_FORM[] =
     "small{display:block;margin-top:18px;color:#8a97a3;font-size:12px}"
     ".danger{background:none;border:1px solid #4b555f;color:#8a97a3;margin-top:12px;font-weight:400}"
     "#hint{font-size:12px;color:#6b7885;margin:6px 0 0}"
+    /* Hidden until /config says a key is stored; there is nothing to forget
+     * on a fresh device. */
+    "#ck{display:none}#ck input{width:auto;margin:0 8px 0 0;vertical-align:middle}"
     "</style>"
     "<h1>TapTalk setup</h1><p>Credentials are stored on the device.</p>"
     /* autocomplete=on plus a username/current-password pair is what makes a
@@ -94,6 +97,7 @@ static const char PAGE_FORM[] =
     "<input id=key name=key type=password autocomplete=off autocapitalize=off autocorrect=off "
     "spellcheck=false placeholder='sk-\xe2\x80\xa6'>"
     "<button type=button class=ghost id=tk>Show</button></div>"
+    "<label id=ck><input type=checkbox name=clearkey value=1>Forget the stored API key</label>"
 
     "<button type=submit>Save and restart</button></form>"
     "<form method=POST action=/erase>"
@@ -103,13 +107,19 @@ static const char PAGE_FORM[] =
 
     "<script>"
     "var sel=document.getElementById('netsel'),ssid=document.getElementById('ssid'),"
-    "hint=document.getElementById('hint');"
+    "hint=document.getElementById('hint'),pass=document.getElementById('pass'),"
+    "key=document.getElementById('key'),sc=null;"
     "function toggle(b,i){b.onclick=function(){var p=i.type==='password';"
     "i.type=p?'text':'password';b.textContent=p?'Hide':'Show';};}"
-    "toggle(document.getElementById('tp'),document.getElementById('pass'));"
-    "toggle(document.getElementById('tk'),document.getElementById('key'));"
-    "sel.onchange=function(){if(sel.value){ssid.value=sel.value;"
-    "document.getElementById('pass').focus();}};"
+    "toggle(document.getElementById('tp'),pass);"
+    "toggle(document.getElementById('tk'),key);"
+    /* The stored password is kept only for the stored network, so the "leave
+     * blank" offer must appear and disappear as the SSID field changes. */
+    "function ph(){pass.placeholder=(sc&&sc.has_pass&&ssid.value===sc.ssid)?"
+    "'Leave blank to keep the stored password':'';}"
+    "ssid.oninput=ph;"
+    "sel.onchange=function(){if(sel.value){ssid.value=sel.value;ph();"
+    "pass.focus();}};"
     "fetch('/scan').then(function(r){return r.json();}).then(function(n){"
     "sel.innerHTML='';"
     "var o=document.createElement('option');o.value='';"
@@ -122,6 +132,19 @@ static const char PAGE_FORM[] =
     "'Scan found nothing. Type the name above.';"
     "}).catch(function(){sel.innerHTML='<option>Scan unavailable</option>';"
     "hint.textContent='Type the network name above.';});"
+    /* Prefill from the stored configuration, so changing one field does not
+     * mean retyping -- or silently resetting -- the others. A fresh device
+     * returns empty strings and the compiled-in defaults above stand. */
+    "fetch('/config').then(function(r){return r.json();}).then(function(c){"
+    "sc=c;"
+    "if(c.ssid)ssid.value=c.ssid;"
+    "if(c.url)document.getElementById('url').value=c.url;"
+    "if(c.model)document.getElementById('model').value=c.model;"
+    "if(c.lang)document.getElementById('lang').value=c.lang;"
+    "if(c.has_key){key.placeholder='Leave blank to keep the stored key';"
+    "document.getElementById('ck').style.display='block';}"
+    "ph();"
+    "}).catch(function(){});"
     "</script>";
 
 static const char PAGE_SAVED[] =
@@ -266,6 +289,55 @@ static esp_err_t get_scan(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* Scratch for handlers that need the stored configuration. File-scope rather
+ * than a local: the struct is ~700 bytes and post_save's frame already holds
+ * the 2.3 KB body on the default 4 KB httpd stack. esp_http_server runs every
+ * handler on its single server task, so nothing races it. It briefly holds
+ * both secrets, hence the wipe after every use. */
+static app_config_t s_stored;
+
+/* One "key":"value", pair. A value that cannot be escaped into the buffer
+ * becomes "", which the page treats the same as nothing-stored. */
+static void send_cfg_field(httpd_req_t *req, const char *key, const char *val)
+{
+    /* Sized for the worst legal case: a 255-byte URL of nothing but
+     * backslashes doubles; a 32-byte SSID of control bytes grows sixfold. */
+    char esc[CONFIG_STT_URL_CAP * 2 + 1];
+    if (json_escape(val, strlen(val), esc, sizeof(esc)) < 0) {
+        esc[0] = '\0';
+    }
+    char item[sizeof(esc) + 24];
+    snprintf(item, sizeof(item), "\"%s\":\"%s\",", key, esc);
+    httpd_resp_sendstr_chunk(req, item);
+}
+
+/* Stored values for the form to prefill, so reconfiguring one field does not
+ * silently reset the rest to compiled-in defaults. Non-secrets only: the
+ * Wi-Fi password and API key never leave the device. The page learns just
+ * whether they exist, to offer "leave blank to keep". Every value was typed
+ * by a user once, so it is escaped like the off-the-air SSIDs in /scan. */
+static esp_err_t get_config(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+
+    memset(&s_stored, 0, sizeof(s_stored));
+    (void)config_load(&s_stored); /* failure leaves empty fields: "nothing stored" */
+
+    httpd_resp_sendstr_chunk(req, "{");
+    send_cfg_field(req, "ssid", s_stored.wifi_ssid);
+    send_cfg_field(req, "url", s_stored.stt_url);
+    send_cfg_field(req, "model", s_stored.stt_model);
+    send_cfg_field(req, "lang", s_stored.stt_language);
+    char flags[32];
+    snprintf(flags, sizeof(flags), "\"has_pass\":%d,\"has_key\":%d}",
+             s_stored.wifi_pass[0] ? 1 : 0, s_stored.api_key[0] ? 1 : 0);
+    memset(&s_stored, 0, sizeof(s_stored));
+    httpd_resp_sendstr_chunk(req, flags);
+    httpd_resp_sendstr_chunk(req, NULL);
+    return ESP_OK;
+}
+
 static esp_err_t read_body(httpd_req_t *req, char *buf, size_t cap, size_t *out_len)
 {
     const size_t total = req->content_len;
@@ -328,6 +400,8 @@ static esp_err_t post_save(httpd_req_t *req)
     const int nurl = form_get(body, len, "url", cfg.stt_url, sizeof(cfg.stt_url));
     const int nmodel = form_get(body, len, "model", cfg.stt_model, sizeof(cfg.stt_model));
     const int nlang = form_get(body, len, "lang", cfg.stt_language, sizeof(cfg.stt_language));
+    char clearv[8];
+    const int nclear = form_get(body, len, "clearkey", clearv, sizeof(clearv));
 
     /* Wipe the body: it held both passwords in plaintext. */
     memset(body, 0, sizeof(body));
@@ -337,7 +411,7 @@ static esp_err_t post_save(httpd_req_t *req)
         return ESP_OK;
     }
     if (npass == FORMDEC_BAD || nkey == FORMDEC_BAD || nurl == FORMDEC_BAD ||
-        nmodel == FORMDEC_BAD || nlang == FORMDEC_BAD) {
+        nmodel == FORMDEC_BAD || nlang == FORMDEC_BAD || nclear == FORMDEC_BAD) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "value too long or malformed");
         return ESP_OK;
     }
@@ -347,6 +421,23 @@ static esp_err_t post_save(httpd_req_t *req)
                             "enter an HTTP(S) endpoint and a valid model name");
         return ESP_OK;
     }
+
+    /* The form never echoes secrets back, so an empty secret field means
+     * "keep what is stored", with two deliberate exceptions:
+     *  - a Wi-Fi password belongs to its network. If the SSID changed, empty
+     *    means an open network, not the old network's password;
+     *  - the API key survives endpoint changes (one key often serves several
+     *    OpenAI-compatible URLs). Ticking "forget the stored API key" is the
+     *    explicit way to drop it. */
+    memset(&s_stored, 0, sizeof(s_stored));
+    (void)config_load(&s_stored);
+    if (npass <= 0 && strcmp(cfg.wifi_ssid, s_stored.wifi_ssid) == 0) {
+        memcpy(cfg.wifi_pass, s_stored.wifi_pass, sizeof(cfg.wifi_pass));
+    }
+    if (nkey <= 0 && nclear <= 0) {
+        memcpy(cfg.api_key, s_stored.api_key, sizeof(cfg.api_key));
+    }
+    memset(&s_stored, 0, sizeof(s_stored));
 
     if (config_save(&cfg) != ESP_OK) {
         memset(&cfg, 0, sizeof(cfg));
@@ -377,7 +468,7 @@ static esp_err_t post_erase(httpd_req_t *req)
 static esp_err_t start_http_server(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 5;
+    cfg.max_uri_handlers = 6;
     cfg.lru_purge_enable = true;
     cfg.uri_match_fn     = httpd_uri_match_wildcard;
     /* The AP is ours alone; a short timeout keeps a stalled phone from
@@ -390,12 +481,14 @@ static esp_err_t start_http_server(void)
     const httpd_uri_t save  = {.uri = "/save", .method = HTTP_POST, .handler = post_save};
     const httpd_uri_t erase = {.uri = "/erase", .method = HTTP_POST, .handler = post_erase};
     const httpd_uri_t scan  = {.uri = "/scan", .method = HTTP_GET, .handler = get_scan};
+    const httpd_uri_t conf  = {.uri = "/config", .method = HTTP_GET, .handler = get_config};
     const httpd_uri_t any   = {.uri = "/*", .method = HTTP_GET, .handler = get_any};
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(s_httpd, &save), TAG, "uri save");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(s_httpd, &erase), TAG, "uri erase");
     /* Registered before the wildcard handler: matching runs in registration
-     * order, and the catch-all would happily swallow "/scan". */
+     * order, and the catch-all would happily swallow "/scan" and "/config". */
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(s_httpd, &scan), TAG, "uri scan");
+    ESP_RETURN_ON_ERROR(httpd_register_uri_handler(s_httpd, &conf), TAG, "uri config");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(s_httpd, &any), TAG, "uri any");
     return ESP_OK;
 }
