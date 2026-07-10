@@ -21,6 +21,7 @@
 #define CONFIG_STT_URL_CAP     256
 #define CONFIG_STT_MODEL_CAP   64
 #define CONFIG_STT_LANGUAGE_CAP 16
+#define CONFIG_KBD_LAYOUT_CAP  16
 
 #define CONFIG_DEFAULT_STT_URL   "https://api.openai.com/v1/audio/transcriptions"
 #define CONFIG_DEFAULT_STT_MODEL "gpt-4o-mini-transcribe"
@@ -32,6 +33,10 @@ typedef struct {
     char stt_url[CONFIG_STT_URL_CAP];
     char stt_model[CONFIG_STT_MODEL_CAP];
     char stt_language[CONFIG_STT_LANGUAGE_CAP];
+    /* A keymap name from core/keymap.h — the layout the HOST is configured
+     * with, not a preference of ours: the host interprets our scancodes
+     * through whatever layout it has set. */
+    char kbd_layout[CONFIG_KBD_LAYOUT_CAP];
 } app_config_t;
 
 /* Reads NVS into *cfg. Missing keys yield empty strings, not an error.
@@ -49,6 +54,10 @@ bool config_is_provisioned(const app_config_t *cfg);
 const char *config_stt_url(const app_config_t *cfg);
 const char *config_stt_model(const app_config_t *cfg);
 bool config_stt_uses_tls(const app_config_t *cfg);
+
+/* Empty maps to "us" — records written before layouts were configurable keep
+ * typing exactly as they did. */
+const char *config_kbd_layout(const app_config_t *cfg);
 
 /* Wipes the whole namespace. Used by the portal's "Erase credentials". */
 esp_err_t config_erase(void);

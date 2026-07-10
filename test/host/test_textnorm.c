@@ -33,6 +33,8 @@ TEST_MAIN("textnorm", {
     CHECK_EQ_INT(textnorm_deaccent(0x00F5), 'o'); /* õ */
     CHECK_EQ_INT(textnorm_deaccent(0x2019), '\''); /* ’ */
     CHECK_EQ_INT(textnorm_deaccent(0x201C), '"');  /* “ */
+    CHECK_EQ_INT(textnorm_deaccent(0x00AB), '"');  /* « */
+    CHECK_EQ_INT(textnorm_deaccent(0x00BB), '"');  /* » */
     CHECK_EQ_INT(textnorm_deaccent(0x2014), '-');  /* em dash */
     CHECK_EQ_INT(textnorm_deaccent(0x00A0), ' ');  /* nbsp */
     CHECK_EQ_INT(textnorm_deaccent('a'), 0);       /* already ASCII */

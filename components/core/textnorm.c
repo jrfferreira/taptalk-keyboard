@@ -76,6 +76,7 @@ uint32_t textnorm_deaccent(uint32_t cp)
     /* Punctuation a transcription service is apt to emit. */
     case 0x2018: case 0x2019: return '\''; /* curly single quotes */
     case 0x201C: case 0x201D: return '"';  /* curly double quotes */
+    case 0x00AB: case 0x00BB: return '"';  /* guillemets, the pt-PT quotes */
     case 0x2013: case 0x2014: return '-';  /* en/em dash */
     case 0x00A0: return ' ';               /* non-breaking space */
     default: return 0;

@@ -231,6 +231,7 @@ void app_main(void)
 
     /* Last, and deliberately so: this is the line that costs us the
      * USB-Serial-JTAG console. Everything worth watching has already logged. */
+    hid_kbd_set_layout(config_kbd_layout(&cfg));
     ESP_ERROR_CHECK(hid_kbd_start());
 
     ESP_ERROR_CHECK(diag_start());

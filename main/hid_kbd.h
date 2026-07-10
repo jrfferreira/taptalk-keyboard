@@ -15,6 +15,11 @@
  * takes the console with it. */
 esp_err_t hid_kbd_start(void);
 
+/* Selects the keymap transcripts are typed with, by its stored settings name
+ * ("us", "abnt2", ...). Call before hid_kbd_start(); an unknown name falls
+ * back to US rather than fail. */
+void hid_kbd_set_layout(const char *name);
+
 /* True once a host has enumerated us. There is no point recording with nobody
  * to type into, so this gates the record button. */
 bool hid_kbd_mounted(void);

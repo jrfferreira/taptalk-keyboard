@@ -2,6 +2,7 @@ CC      ?= cc
 CORE    := ../../components/core
 CFLAGS  := -std=c11 -Wall -Wextra -Werror -O1 -g -I$(CORE)/include -I.
 SRC     := $(CORE)/wav.c $(CORE)/textnorm.c $(CORE)/keymap.c $(CORE)/keymap_us.c \
+           $(CORE)/keymap_abnt2.c $(CORE)/keymap_pt.c \
            $(CORE)/multipart.c $(CORE)/sm.c $(CORE)/formdec.c $(CORE)/dnsreply.c $(CORE)/jsonesc.c $(CORE)/typeplan.c
 TESTS   := test_wav test_textnorm test_keymap test_multipart test_sm test_formdec test_dnsreply test_jsonesc test_typeplan
 

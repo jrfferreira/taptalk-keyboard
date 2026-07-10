@@ -16,6 +16,7 @@ static const char *TAG = "config";
 #define K_STT_URL "stt_url"
 #define K_STT_MODEL "stt_model"
 #define K_STT_LANG "stt_lang"
+#define K_KBD_LAYOUT "kbd_layout"
 
 /* Optional developer convenience: if main/secrets.h exists it seeds NVS on
  * first boot, so a bench build skips the portal. It is gitignored and must
@@ -56,6 +57,7 @@ esp_err_t config_load(app_config_t *cfg)
         ESP_RETURN_ON_ERROR(get_str(h, K_STT_URL, cfg->stt_url, sizeof(cfg->stt_url)), TAG, "stt url");
         ESP_RETURN_ON_ERROR(get_str(h, K_STT_MODEL, cfg->stt_model, sizeof(cfg->stt_model)), TAG, "stt model");
         ESP_RETURN_ON_ERROR(get_str(h, K_STT_LANG, cfg->stt_language, sizeof(cfg->stt_language)), TAG, "stt language");
+        ESP_RETURN_ON_ERROR(get_str(h, K_KBD_LAYOUT, cfg->kbd_layout, sizeof(cfg->kbd_layout)), TAG, "kbd layout");
         nvs_close(h);
     }
 
@@ -74,9 +76,10 @@ esp_err_t config_load(app_config_t *cfg)
 
     char masked[24];
     config_mask_key(cfg->api_key, masked, sizeof(masked));
-    ESP_LOGI(TAG, "ssid=%s stt_url=%s stt_model=%s language=%s api_key=%s",
+    ESP_LOGI(TAG, "ssid=%s stt_url=%s stt_model=%s language=%s layout=%s api_key=%s",
              cfg->wifi_ssid[0] ? cfg->wifi_ssid : "<unset>", config_stt_url(cfg),
-             config_stt_model(cfg), cfg->stt_language[0] ? cfg->stt_language : "<auto>", masked);
+             config_stt_model(cfg), cfg->stt_language[0] ? cfg->stt_language : "<auto>",
+             config_kbd_layout(cfg), masked);
     return ESP_OK;
 }
 
@@ -91,6 +94,7 @@ esp_err_t config_save(const app_config_t *cfg)
     if (err == ESP_OK) err = nvs_set_str(h, K_STT_URL, cfg->stt_url);
     if (err == ESP_OK) err = nvs_set_str(h, K_STT_MODEL, cfg->stt_model);
     if (err == ESP_OK) err = nvs_set_str(h, K_STT_LANG, cfg->stt_language);
+    if (err == ESP_OK) err = nvs_set_str(h, K_KBD_LAYOUT, cfg->kbd_layout);
     if (err == ESP_OK) err = nvs_commit(h);
 
     nvs_close(h);
@@ -114,6 +118,11 @@ const char *config_stt_model(const app_config_t *cfg)
 bool config_stt_uses_tls(const app_config_t *cfg)
 {
     return strncmp(config_stt_url(cfg), "https://", 8) == 0;
+}
+
+const char *config_kbd_layout(const app_config_t *cfg)
+{
+    return cfg->kbd_layout[0] ? cfg->kbd_layout : "us";
 }
 
 esp_err_t config_erase(void)

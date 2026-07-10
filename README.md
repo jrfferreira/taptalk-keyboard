@@ -69,7 +69,8 @@ it raises its own Wi-Fi network and shows a QR code.
 1. Scan the QR code, or join `TapTalk-XXXX` with the eight-digit password on
    screen. That password is regenerated from the hardware RNG every boot.
 2. A setup page opens by itself. Enter your Wi-Fi, transcription endpoint,
-   model, and (if required) API key.
+   model, the keyboard layout your computer is set to, and (if required) an
+   API key.
 3. The device saves the settings and restarts.
 
 Tap the **cog** on the main screen to change them later, or to erase them.
@@ -98,11 +99,16 @@ typed into the host.**
 | Browser installer | ✅ works |
 | Driver or companion software on the host | ✅ none required |
 | Confirmation beeps, diagnostics heartbeat | ⚠️ shipped, not yet re-tested on the board |
-| Brazilian ABNT2 keyboard layout | ❌ not started |
+| Selectable keyboard layouts (US, ABNT2, Portuguese) | ✅ implemented; hardware validation pending |
 
-Accented characters type without their accents on a US layout — `ação` arrives
-as `acao`. Emoji are skipped rather than mangled. The engine already handles the
-multi-keystroke sequences a Portuguese layout needs; only the table is missing.
+The setup page asks which layout the *computer* is set to — the host decodes
+our keystrokes through its own layout, so the two must match. On the Portuguese
+layouts accents are composed with dead keys and `ação` types as written; on US
+it falls back to the bare letters and arrives as `acao`. Emoji are skipped
+rather than mangled. The layout tables are transcribed from Microsoft's KBDBR
+and KBDPO definitions; AltGr symbols assume a Windows or Linux host, since
+macOS arranges its Option combinations differently. Adding another language is
+one table in `components/core/` plus a `<option>` in the portal.
 
 ## Develop
 
@@ -120,7 +126,7 @@ tools/idf.sh build
 Needs only a C compiler and Python 3. Runs in about a second.
 
 ```sh
-cd test/host && make test        # 10,166 checks across 10 suites
+cd test/host && make test        # 13,061 checks across 10 suites
 ```
 
 `components/core/` deliberately includes no `esp_*` headers, which is what lets
