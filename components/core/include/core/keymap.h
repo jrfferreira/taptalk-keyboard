@@ -7,6 +7,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "core/hid_codes.h"
@@ -27,7 +28,40 @@ typedef struct {
     bool (*lookup)(uint32_t codepoint, hid_seq_t *out);
 } keymap_layout_t;
 
-extern const keymap_layout_t keymap_us;
+/* Storage for table-driven layouts: (codepoint -> sequence) entries, scanned
+ * linearly. Order is free — no sortedness to silently get wrong — and speed
+ * is irrelevant: every emitted frame already sleeps for milliseconds. */
+typedef struct {
+    uint32_t cp;
+    hid_seq_t seq;
+} keymap_entry_t;
+
+bool keymap_table_lookup(const keymap_entry_t *entries, size_t count, uint32_t cp,
+                         hid_seq_t *out);
+
+/* keymap_us, keymap_abnt2 and keymap_pt are maintained by hand; the rest are
+ * generated from Microsoft's layout tables by tools/gen_keymap.py. A new
+ * layout is one generator run, an entry in keymap_layouts[], and an <option>
+ * in the setup portal (main/provisioning.c). */
+extern const keymap_layout_t keymap_us;     /* US ANSI */
+extern const keymap_layout_t keymap_uk;     /* United Kingdom */
+extern const keymap_layout_t keymap_usintl; /* US International (dead keys) */
+extern const keymap_layout_t keymap_abnt2;  /* Portuguese (Brazil), ABNT2 */
+extern const keymap_layout_t keymap_pt;     /* Portuguese (Portugal) */
+extern const keymap_layout_t keymap_es;     /* Spanish (Spain) */
+extern const keymap_layout_t keymap_esla;   /* Spanish (Latin America) */
+extern const keymap_layout_t keymap_fr;     /* French (AZERTY) */
+extern const keymap_layout_t keymap_de;     /* German (QWERTZ) */
+extern const keymap_layout_t keymap_it;     /* Italian */
+
+/* Every built-in layout, for tests and UIs that enumerate them. */
+extern const keymap_layout_t *const keymap_layouts[];
+extern const size_t keymap_layouts_count;
+
+/* The layout whose name matches the stored settings token ("us", "abnt2",
+ * ...), or NULL. Exact match only: the token is ours, so a near-miss is a bug
+ * upstream, not something to paper over here. */
+const keymap_layout_t *keymap_by_name(const char *name);
 
 typedef enum {
     KEYMAP_EXACT,      /* layout produces the codepoint directly */

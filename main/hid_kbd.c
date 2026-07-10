@@ -31,6 +31,9 @@ static volatile hid_op_t s_op;
 static uint8_t s_send_mod, s_send_key; /* the chord OP_SEND strikes */
 static int s_last_typed_units;         /* cursor advances from the last OP_TYPE, for Undo */
 
+/* Written once during boot, before the typing task exists; read-only after. */
+static const keymap_layout_t *s_layout = &keymap_us;
+
 #if CONFIG_TAPTALK_ENABLE_HID
 
 #include "tinyusb.h"
@@ -150,7 +153,7 @@ static bool send_frame(const hid_step_t *f)
 static bool emit(uint32_t codepoint, size_t *skipped)
 {
     hid_frames_t plan;
-    if (typeplan_char(&keymap_us, codepoint, &plan) == KEYMAP_SKIPPED) {
+    if (typeplan_char(s_layout, codepoint, &plan) == KEYMAP_SKIPPED) {
         (*skipped)++;
         return true; /* dropped, not fatal */
     }
@@ -205,7 +208,8 @@ static void type_out(const char *s)
     s_last_typed_units = (int)units;
 
     if (skipped > 0) {
-        ESP_LOGW(TAG, "%u characters could not be typed on the US layout", (unsigned)skipped);
+        ESP_LOGW(TAG, "%u characters could not be typed on the %s layout", (unsigned)skipped,
+                 s_layout->name);
     }
     ESP_LOGI(TAG, "typed %u bytes (%u undoable characters)", (unsigned)len, (unsigned)units);
     app_sm_post(EV_TYPE_DONE);
@@ -338,6 +342,18 @@ esp_err_t hid_kbd_start(void)
 }
 
 #endif
+
+void hid_kbd_set_layout(const char *name)
+{
+    const keymap_layout_t *l = keymap_by_name(name);
+    if (l == NULL) {
+        /* A device that types de-accented text beats one that cannot type. */
+        ESP_LOGW(TAG, "unknown layout \"%s\"; typing with US", name ? name : "<null>");
+        l = &keymap_us;
+    }
+    s_layout = l;
+    ESP_LOGI(TAG, "typing with the %s layout", s_layout->name);
+}
 
 esp_err_t hid_kbd_type(const char *utf8)
 {

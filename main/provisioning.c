@@ -8,6 +8,7 @@
 #include "core/dnsreply.h"
 #include "core/formdec.h"
 #include "core/jsonesc.h"
+#include "core/keymap.h"
 #include "esp_check.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -92,6 +93,24 @@ static const char PAGE_FORM[] =
     "<input id=lang name=lang maxlength=15 autocapitalize=off autocorrect=off "
     "spellcheck=false placeholder='auto, en, pt, ...'>"
 
+    /* The HOST decodes our keystrokes through its own layout, so this must
+     * match the computer being typed into, not a preference. */
+    "<label for=layout>Keyboard layout of the computer</label>"
+    "<select id=layout name=layout>"
+    "<option value=us>English (US)</option>"
+    "<option value=uk>English (UK)</option>"
+    "<option value=us-intl>English (US International)</option>"
+    "<option value=de>Deutsch</option>"
+    "<option value=es>Espa\xc3\xb1ol \xe2\x80\x94 Espa\xc3\xb1a</option>"
+    "<option value=es-la>Espa\xc3\xb1ol \xe2\x80\x94 Latinoam\xc3\xa9rica</option>"
+    "<option value=fr>Fran\xc3\xa7ais (AZERTY)</option>"
+    "<option value=it>Italiano</option>"
+    "<option value=abnt2>Portugu\xc3\xaas \xe2\x80\x94 Brasil (ABNT2)</option>"
+    "<option value=pt>Portugu\xc3\xaas \xe2\x80\x94 Portugal</option>"
+    "</select>"
+    "<p class=help>The layout the computer you type into is set to. Accents are "
+    "typed with dead keys, so this must match or they come out wrong.</p>"
+
     "<label for=key>API key (optional for local servers)</label>"
     "<div class=row>"
     "<input id=key name=key type=password autocomplete=off autocapitalize=off autocorrect=off "
@@ -151,6 +170,10 @@ static const char PAGE_FORM[] =
     "if(c.url)document.getElementById('url').value=c.url;"
     "if(c.model)document.getElementById('model').value=c.model;"
     "if(c.lang)document.getElementById('lang').value=c.lang;"
+    /* Both selects, or saving from a reopened form silently resets them:
+     * the layout to US, the send chord to Enter. */
+    "if(c.layout)document.getElementById('layout').value=c.layout;"
+    "if(c.sendkey)document.getElementById('sendkey').value=c.sendkey;"
     "if(c.has_key){key.placeholder='Leave blank to keep the stored key';"
     "document.getElementById('ck').style.display='block';}"
     "ph();"
@@ -339,9 +362,11 @@ static esp_err_t get_config(httpd_req_t *req)
     send_cfg_field(req, "url", s_stored.stt_url);
     send_cfg_field(req, "model", s_stored.stt_model);
     send_cfg_field(req, "lang", s_stored.stt_language);
-    char flags[32];
-    snprintf(flags, sizeof(flags), "\"has_pass\":%d,\"has_key\":%d}",
-             s_stored.wifi_pass[0] ? 1 : 0, s_stored.api_key[0] ? 1 : 0);
+    send_cfg_field(req, "layout", s_stored.kbd_layout);
+    char flags[48];
+    snprintf(flags, sizeof(flags), "\"sendkey\":%d,\"has_pass\":%d,\"has_key\":%d}",
+             (int)s_stored.send_key, s_stored.wifi_pass[0] ? 1 : 0,
+             s_stored.api_key[0] ? 1 : 0);
     memset(&s_stored, 0, sizeof(s_stored));
     httpd_resp_sendstr_chunk(req, flags);
     httpd_resp_sendstr_chunk(req, NULL);
@@ -410,6 +435,7 @@ static esp_err_t post_save(httpd_req_t *req)
     const int nurl = form_get(body, len, "url", cfg.stt_url, sizeof(cfg.stt_url));
     const int nmodel = form_get(body, len, "model", cfg.stt_model, sizeof(cfg.stt_model));
     const int nlang = form_get(body, len, "lang", cfg.stt_language, sizeof(cfg.stt_language));
+    const int nlayout = form_get(body, len, "layout", cfg.kbd_layout, sizeof(cfg.kbd_layout));
     char clearv[8];
     const int nclear = form_get(body, len, "clearkey", clearv, sizeof(clearv));
 
@@ -434,7 +460,8 @@ static esp_err_t post_save(httpd_req_t *req)
         return ESP_OK;
     }
     if (npass == FORMDEC_BAD || nkey == FORMDEC_BAD || nurl == FORMDEC_BAD ||
-        nmodel == FORMDEC_BAD || nlang == FORMDEC_BAD || nclear == FORMDEC_BAD) {
+        nmodel == FORMDEC_BAD || nlang == FORMDEC_BAD || nlayout == FORMDEC_BAD ||
+        nclear == FORMDEC_BAD) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "value too long or malformed");
         return ESP_OK;
     }
@@ -442,6 +469,13 @@ static esp_err_t post_save(httpd_req_t *req)
         !printable_ascii(cfg.stt_model) || !printable_ascii(cfg.stt_language)) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
                             "enter an HTTP(S) endpoint and a valid model name");
+        return ESP_OK;
+    }
+    /* Absent (an old cached form) or empty means the default; anything else
+     * must name a layout this firmware ships. Storing an unknown token would
+     * only surface as silently wrong typing much later. */
+    if (cfg.kbd_layout[0] != '\0' && keymap_by_name(cfg.kbd_layout) == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "unknown keyboard layout");
         return ESP_OK;
     }
 
