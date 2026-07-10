@@ -35,4 +35,4 @@ void ui_set_error(const char *text);
 void ui_clear_msg(void);
 
 /* Swaps to the setup screen and shows how to reach the portal. */
-void ui_show_setup(const prov_info_t *info);
+void ui_show_setup(const prov_info_t *info, bool can_exit);
