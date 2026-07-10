@@ -28,4 +28,16 @@ menu "TapTalk"
             faster than the host polls loses keys. Raise this if characters go
             missing on a particular machine.
 
+    config TAPTALK_BEEP
+        bool "Confirmation tones through the speaker"
+        default y
+        help
+            The board has no haptic motor, so a short tone is the only way to
+            confirm a press without looking at the screen.
+
+            The press tone is played into the same room as the microphone that
+            is about to start recording, so audio_capture.c discards the first
+            BEEP_PRESS_MS of every clip. Turning this off also turns off that
+            discard.
+
 endmenu

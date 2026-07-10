@@ -7,6 +7,7 @@ idf_component_register(
         "pmic.c"
         "ui.c"
         "audio_capture.c"
+        "beeper.c"
         "net_wifi.c"
         "stt_client.c"
         "hid_kbd.c"

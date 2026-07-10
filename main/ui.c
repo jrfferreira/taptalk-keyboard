@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "app_sm.h"
+#include "beeper.h"
 #include "bsp/esp-bsp.h"
 #include "esp_check.h"
 #include "esp_log.h"
@@ -33,6 +34,13 @@ static const char *TAG = "ui";
 #define C_IDLE_BOT 0x1B8560
 #define C_REC_TOP  0xFF7A6E
 #define C_REC_BOT  0xB3241C
+/* Pressed = the same hue, lifted. A different hue would read as a different
+ * button; a lift reads as the same button, depressed. */
+#define C_IDLE_TOP_P 0x8CFFCB
+#define C_IDLE_BOT_P 0x27A87A
+#define C_REC_TOP_P  0xFFA096
+#define C_REC_BOT_P  0xD13A30
+#define PRESS_MS 90
 #define C_INK      0x04150E
 #define C_ON       0x3DDC97
 #define C_OFF      0x39434D
@@ -105,6 +113,16 @@ static void set_grad(lv_obj_t *o, uint32_t top, uint32_t bot)
     lv_obj_set_style_bg_opa(o, LV_OPA_COVER, LV_PART_MAIN);
 }
 
+/* The pressed look is a STYLE on LV_STATE_PRESSED, not something ui_tick()
+ * paints. LVGL swaps and animates it in the render task on the touch event
+ * itself, so the feedback is immediate and the tick stays free -- which is the
+ * whole lesson of the twelve-second screen. */
+static void set_grad_pressed(lv_obj_t *o, uint32_t top, uint32_t bot)
+{
+    lv_obj_set_style_bg_color(o, lv_color_hex(top), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_grad_color(o, lv_color_hex(bot), LV_PART_MAIN | LV_STATE_PRESSED);
+}
+
 /* Runs in the LVGL task, which already holds the LVGL lock.
  *
  * Every LVGL setter invalidates the widget it touches, whether or not the
@@ -135,6 +153,8 @@ static void ui_tick(lv_timer_t *timer)
     if ((int)rec != last_rec) {
         last_rec = rec;
         set_grad(s_btn, rec ? C_REC_TOP : C_IDLE_TOP, rec ? C_REC_BOT : C_IDLE_BOT);
+        set_grad_pressed(s_btn, rec ? C_REC_TOP_P : C_IDLE_TOP_P,
+                         rec ? C_REC_BOT_P : C_IDLE_BOT_P);
         lv_obj_set_style_shadow_color(s_btn, lv_color_hex(rec ? C_REC_TOP : C_IDLE_TOP),
                                       LV_PART_MAIN);
         if (rec) {
@@ -218,9 +238,29 @@ static void sheet_close(lv_event_t *e)
 }
 
 /* LVGL event callbacks fire in the LVGL task. They only enqueue. */
-static void on_press(lv_event_t *e) { (void)e; app_sm_post(EV_BTN_PRESS); }
-static void on_release(lv_event_t *e) { (void)e; app_sm_post(EV_BTN_RELEASE); }
-static void on_press_lost(lv_event_t *e) { (void)e; app_sm_post(EV_PRESS_LOST); }
+/* The beep goes out from the touch event, not from the state machine, so the
+ * confirmation is bound to the finger rather than to whatever the machine
+ * decides to do about it. A press that is refused still clicks. */
+static void on_press(lv_event_t *e)
+{
+    (void)e;
+    beeper_play(BEEP_PRESS);
+    app_sm_post(EV_BTN_PRESS);
+}
+
+static void on_release(lv_event_t *e)
+{
+    (void)e;
+    beeper_play(BEEP_RELEASE);
+    app_sm_post(EV_BTN_RELEASE);
+}
+
+static void on_press_lost(lv_event_t *e)
+{
+    (void)e;
+    beeper_play(BEEP_RELEASE);
+    app_sm_post(EV_PRESS_LOST);
+}
 static void on_setup(lv_event_t *e) { (void)e; app_sm_post(EV_ENTER_SETUP); }
 
 /* A microphone, drawn from primitives: LVGL's symbol font has no mic glyph. */
@@ -364,6 +404,19 @@ static void build_main(void)
     lv_obj_set_style_shadow_spread(s_btn, 0, LV_PART_MAIN);
     lv_obj_set_style_shadow_opa(s_btn, LV_OPA_20, LV_PART_MAIN);
     set_grad(s_btn, C_IDLE_TOP, C_IDLE_BOT);
+    /* Animate the pressed style rather than snapping to it. LVGL runs this in
+     * the render task on the touch event, so it costs nothing per tick. */
+    static const lv_style_prop_t press_props[] = {
+        LV_STYLE_BG_COLOR, LV_STYLE_BG_GRAD_COLOR,
+        LV_STYLE_TRANSFORM_SCALE_X, LV_STYLE_TRANSFORM_SCALE_Y, 0,
+    };
+    static lv_style_transition_dsc_t press_tr;
+    lv_style_transition_dsc_init(&press_tr, press_props, lv_anim_path_ease_out, PRESS_MS, 0, NULL);
+    lv_obj_set_style_transition(s_btn, &press_tr, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_transition(s_btn, &press_tr, LV_PART_MAIN | LV_STATE_PRESSED);
+    /* 256 is 1.0. A 3% shrink reads as "it moved" without looking like a bug. */
+    lv_obj_set_style_transform_scale(s_btn, 248, LV_PART_MAIN | LV_STATE_PRESSED);
+
     lv_obj_add_event_cb(s_btn, on_press, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(s_btn, on_release, LV_EVENT_RELEASED, NULL);
     lv_obj_add_event_cb(s_btn, on_press_lost, LV_EVENT_PRESS_LOST, NULL);

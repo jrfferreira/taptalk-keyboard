@@ -15,6 +15,7 @@
  * re-enumerates. */
 #include "app_sm.h"
 #include "audio_capture.h"
+#include "beeper.h"
 #include "bsp/esp-bsp.h"
 #include "config_store.h"
 #include "esp_app_desc.h"
@@ -173,6 +174,10 @@ void app_main(void)
         ESP_LOGE(TAG, "audio bring-up failed: %s", esp_err_to_name(err));
         ui_set_error("Microphone error");
     }
+
+    /* After audio: bsp_audio_init() no-ops on a second call, so the speaker
+     * inherits the microphone's 16 kHz rather than defaulting to 22050. */
+    beeper_init();
 
     /* Last, and deliberately so: this is the line that costs us the
      * USB-Serial-JTAG console. Everything worth watching has already logged. */

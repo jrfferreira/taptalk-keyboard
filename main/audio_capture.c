@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "beeper.h"
 #include "ui.h"
 
 static const char *TAG = "audio";
@@ -22,6 +23,10 @@ static esp_codec_dev_handle_t s_mic;
 static uint8_t *s_clip;      /* [WAV_HEADER_SIZE][pcm...] in PSRAM */
 static size_t s_cursor;      /* pcm bytes written */
 static volatile bool s_recording;
+/* Bytes of our own press tone still to be discarded at the head of the clip.
+ * Touched by capture_task and set by audio_record_begin(); the state machine
+ * guarantees they never race. */
+static volatile size_t s_trim_bytes;
 static uint32_t s_clip_ms;
 static int s_clip_peak;
 static int s_live_peak;
@@ -58,12 +63,34 @@ static void capture_task(void *arg)
         ui_set_level((s_live_peak * 100) / 32767);
 
         if (s_recording) {
-            if (peak > s_clip_peak) {
-                s_clip_peak = peak;
+            /* Swallow the press tone. It plays out of a speaker two centimetres
+             * from this microphone, and a 1320 Hz sine at the head of the clip
+             * is something a transcriber will happily try to turn into a word.
+             *
+             * The tail of the beep usually lands mid-chunk, so drop bytes, not
+             * whole chunks -- and drop them BEFORE measuring the clip peak, or
+             * our own beep satisfies the silence guard for us. */
+            size_t off = 0;
+            if (s_trim_bytes > 0) {
+                off = s_trim_bytes < CHUNK_BYTES ? s_trim_bytes : CHUNK_BYTES;
+                s_trim_bytes -= off;
+                if (off == CHUNK_BYTES) {
+                    continue; /* the entire chunk was beep */
+                }
             }
+
+            /* off is a BYTE count; s_chunk is int16_t*, so indexing it directly
+             * would skip twice as far. */
+            const int16_t *pcm  = (const int16_t *)((const uint8_t *)s_chunk + off);
+            const size_t kept   = CHUNK_BYTES - off;
+            const int kept_peak = peak_of(pcm, kept / sizeof(int16_t));
+            if (kept_peak > s_clip_peak) {
+                s_clip_peak = kept_peak;
+            }
+
             const size_t room = AUDIO_MAX_PCM_BYTES - s_cursor;
-            const size_t n    = room < CHUNK_BYTES ? room : CHUNK_BYTES;
-            memcpy(s_clip + WAV_HEADER_SIZE + s_cursor, s_chunk, n);
+            const size_t n    = room < kept ? room : kept;
+            memcpy(s_clip + WAV_HEADER_SIZE + s_cursor, pcm, n);
             s_cursor += n;
 
             s_clip_ms = (uint32_t)(s_cursor / (AUDIO_SAMPLE_RATE * sizeof(int16_t) / 1000));
@@ -124,8 +151,14 @@ esp_err_t audio_capture_start(void)
     return ESP_OK;
 }
 
+/* The tone, plus a margin for the amplifier to settle. Rounded to a whole
+ * sample so the PCM never desynchronises. */
+#define TRIM_MS (BEEP_PRESS_MS + 16)
+#define TRIM_BYTES (((size_t)AUDIO_SAMPLE_RATE * TRIM_MS / 1000) * sizeof(int16_t))
+
 void audio_record_begin(void)
 {
+    s_trim_bytes = beeper_available() ? TRIM_BYTES : 0;
     s_cursor    = 0;
     s_clip_ms   = 0;
     s_clip_peak = 0;

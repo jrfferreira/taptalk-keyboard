@@ -62,3 +62,18 @@ CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y
 CONFIG_LV_COLOR_DEPTH_16=y
 CONFIG_LV_FONT_MONTSERRAT_28=y
 CONFIG_LV_USE_QRCODE=y
+
+# The BSP's bsp_display_start_with_config() ignores cfg->buffer_size and
+# cfg->flags entirely -- it recomputes the buffer from Kconfig and hardcodes
+# buff_dma=false. So these are the only knobs that do anything.
+#
+# The default of 100 rows is 368*100*2 = 147 KB. With buff_dma and buff_spiram
+# both false, esp_lvgl_port allocates it with MALLOC_CAP_DEFAULT, and anything
+# over SPIRAM_MALLOC_ALWAYSINTERNAL (16 KB by default) lands in PSRAM anyway.
+# QSPI DMA out of PSRAM, with the 64-byte cache line octal PSRAM requires, is
+# what painted the setup screen in white bands.
+#
+# 32 rows is 368*32*2 = 23,552 bytes: under the threshold below, so it stays in
+# internal RAM, which is DMA-capable and cache-coherent.
+CONFIG_BSP_DISPLAY_LVGL_BUF_HEIGHT=32
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=32768
