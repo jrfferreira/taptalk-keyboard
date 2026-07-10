@@ -111,3 +111,30 @@ call. `bsp_audio_codec_microphone_init()` calls it with `NULL` if I²S is not
 already up. So to record at 16 kHz you must call `bsp_audio_init(&cfg_16k)`
 **first** — see `main/audio_capture.c`. Getting this wrong yields audio that
 plays back at the wrong speed and transcribes as gibberish.
+
+## After HID lands: the console moves, and so does reflashing
+
+Once `hid_kbd_start()` installs TinyUSB, the USB PHY belongs to the OTG
+controller. Two consequences, both permanent for that boot:
+
+**The console moves.** Every log line before that call arrives on the
+USB-Serial-JTAG port you flashed from. Everything after arrives on the
+composite CDC interface, because `tinyusb_console_init()` redirects it. The
+device re-enumerates at that moment, so your monitor will drop; reattach it to
+the new port. This is why HID is the *last* thing boot does — the AXP2101
+register dump, the audio bring-up and the Wi-Fi association are all already on
+the wire before the port changes.
+
+**Reflashing needs the button.** esptool can no longer reset the board into the
+ROM bootloader over USB, because the port it would talk to is a keyboard.
+
+    hold BOOT, tap PWR, release BOOT
+
+Then flash. This applies to the browser installer too.
+
+To skip all of this during bring-up, build with HID off:
+
+    idf.py menuconfig   # TapTalk -> Enumerate as a USB HID keyboard = n
+
+The USB-Serial-JTAG console then survives, and transcripts are logged instead
+of typed.

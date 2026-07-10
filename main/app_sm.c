@@ -1,6 +1,8 @@
 #include "app_sm.h"
 
 #include "audio_capture.h"
+#include "hid_kbd.h"
+#include "stt_client.h"
 #include "config_store.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -48,9 +50,7 @@ static sm_guards_t current_guards(void)
         .provisioned = config_is_provisioned(&s_cfg),
         .wifi_up     = s_wifi_up,
         .time_ok     = s_time_ok,
-        /* Chunk 1 ships no USB HID, so there is no tud_mounted() to ask. VBUS
-         * presence from the PMU is the honest stand-in: no cable, no host to
-         * type into. hid_kbd.c replaces this in chunk 2. */
+        /* A host that has enumerated us, not merely a cable delivering power. */
         .usb_mounted  = s_usb,
         .clip_usable  = audio_clip_usable(),
         .wifi_retries = net_wifi_retries(),
@@ -67,9 +67,6 @@ static void run_actions(uint32_t actions)
             if (!st.aldo1_on) {
                 ESP_LOGE(TAG, "ALDO1 still off after enable; the microphone will be silent");
             }
-            /* Seed the cable state before anything can consult the guard. */
-            s_usb = pmic_vbus_present();
-            ui_set_usb(s_usb);
             app_sm_post(EV_PMIC_OK);
         } else {
             ui_set_msg("PMIC not found");
@@ -100,37 +97,46 @@ static void run_actions(uint32_t actions)
         audio_record_end();
     }
     if (actions & ACT_UPLOAD_START) {
-        /* Chunk 2 replaces this with the multipart HTTPS client. Reporting the
-         * clip and returning to idle keeps the flow honest in the meantime
-         * rather than faking a transcript. */
-        ESP_LOGI(TAG, "clip ready: %u ms, peak %d (upload lands in chunk 2)",
-                 (unsigned)audio_clip_ms(), audio_clip_peak());
-        char msg[64];
-        snprintf(msg, sizeof(msg), "Recorded %.1fs, peak %d", audio_clip_ms() / 1000.0f,
-                 audio_clip_peak());
-        ui_set_msg(msg);
-        app_sm_post(EV_STT_EMPTY);
+        size_t total = 0;
+        const uint8_t *wav = audio_clip_wav(&total);
+        ui_set_msg("Transcribing\u2026");
+        if (stt_start(s_cfg.api_key, wav, total) != ESP_OK) {
+            ui_set_msg(stt_error());
+            app_sm_post(EV_STT_FAIL);
+        }
+    }
+    if (actions & ACT_UPLOAD_ABORT) {
+        stt_abort();
+    }
+    if (actions & ACT_TYPE_START) {
+        ui_set_msg("Typing\u2026");
+        if (hid_kbd_type(stt_transcript()) != ESP_OK) {
+            app_sm_post(EV_TYPE_ABORT);
+        }
+    }
+    if (actions & ACT_TYPE_ABORT) {
+        hid_kbd_abort();
     }
     if (actions & ACT_CLIP_DISCARD) {
         audio_clip_discard();
     }
     if (actions & ACT_HINT_NOT_READY) {
-        ui_set_msg(!s_usb      ? "No USB cable"
-                   : !s_wifi_up ? "Wi-Fi not connected"
-                                : "Clock not synced");
+        ui_set_msg(!s_usb                        ? "Not plugged into a computer"
+                   : !s_wifi_up                  ? "Wi-Fi not connected"
+                   : !config_has_api_key(&s_cfg) ? "No API key - tap Setup"
+                                                 : "Clock not synced");
     }
     if (actions & ACT_SHOW_ERROR) {
-        ui_set_msg(config_is_provisioned(&s_cfg) ? "Error - tap Setup or wait"
-                                                 : "Not configured - tap Setup");
+        /* Prefer the real reason over a generic one. */
+        ui_set_msg(!config_is_provisioned(&s_cfg) ? "Not configured - tap Setup"
+                   : stt_error()[0] != '\0'      ? stt_error()
+                                                 : "Error - tap Setup or wait");
     }
     if (actions & ACT_REBOOT) {
         ESP_LOGI(TAG, "restarting to apply configuration");
         vTaskDelay(pdMS_TO_TICKS(300));
         esp_restart();
     }
-    /* ACT_UPLOAD_ABORT / ACT_TYPE_START / ACT_TYPE_ABORT are unreachable in
-     * chunk 1: there is no network client and no HID. Deliberately not
-     * stubbed, so the compiler cannot hide their absence later. */
 }
 
 static void sm_task(void *arg)
@@ -145,9 +151,9 @@ static void sm_task(void *arg)
     for (;;) {
         app_event_t ev;
         if (xQueueReceive(s_queue, &ev, pdMS_TO_TICKS(TICK_MS)) != pdTRUE) {
-            /* Idle tick. Poll the cable: no VBUS means no host to type into,
-             * so recording is pointless and the USB icon must say so. */
-            const bool usb_now = pmic_vbus_present();
+            /* Idle tick. No enumerated host means nothing to type into, so
+             * recording is pointless and the USB icon must say so. */
+            const bool usb_now = hid_kbd_mounted();
             if (usb_now != s_usb) {
                 ui_set_usb(usb_now);
                 app_sm_post(usb_now ? EV_USB_MOUNT : EV_USB_UNMOUNT);

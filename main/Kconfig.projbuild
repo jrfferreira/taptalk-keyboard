@@ -1,0 +1,31 @@
+menu "TapTalk"
+
+    config TAPTALK_ENABLE_HID
+        bool "Enumerate as a USB HID keyboard"
+        default y
+        help
+            Installs TinyUSB and types transcripts into the host.
+
+            Turning this OFF is a bring-up aid: TinyUSB takes over the USB PHY
+            from the USB-Serial-JTAG controller, so with it on you can no
+            longer flash over USB while the app runs (hold BOOT, tap PWR), and
+            the console moves to the composite CDC interface. With it off, the
+            transcript is only logged.
+
+    config TAPTALK_TRAILING_SPACE
+        bool "Type a space after each transcript"
+        default y
+        help
+            Lets you dictate several phrases in a row without them running
+            together. Never types Enter: that would submit forms.
+
+    config TAPTALK_KEY_INTERVAL_MS
+        int "Milliseconds between keystrokes"
+        default 6
+        range 2 50
+        help
+            A USB boot keyboard is polled every few milliseconds. Sending
+            faster than the host polls loses keys. Raise this if characters go
+            missing on a particular machine.
+
+endmenu

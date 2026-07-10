@@ -107,6 +107,44 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 2.8.0~1
+  espressif/esp_tinyusb:
+    component_hash: 
+      9a73a76a6bc17907f6e523342ff6b1e440023e8aac2c11f4691212106ec24e66
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    - name: espressif/tinyusb
+      registry_url: https://components.espressif.com
+      require: public
+      version: '>=0.17.0~2'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32s2
+    - esp32s3
+    - esp32p4
+    - esp32h4
+    - esp32s31
+    version: 2.2.1
+  espressif/tinyusb:
+    component_hash: 
+      a40b7f67df6ac254a4afd96c6401cc56f2059ae747d6d7e66b568bca53ad0edc
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    targets:
+    - esp32s2
+    - esp32s3
+    - esp32p4
+    - esp32h4
+    - esp32s31
+    version: 0.19.0~3
   idf:
     source:
       type: idf
@@ -176,8 +214,9 @@ dependencies:
       type: service
     version: 2.0.0
 direct_dependencies:
+- espressif/esp_tinyusb
 - idf
 - waveshare/esp32_s3_touch_amoled_1_8
-manifest_hash: 66280e277fe4d8326b0a33f840c91ec1565657841ec2e0a0cb527862402e0fe4
+manifest_hash: b7334d2ff7d84a8278738e2127800468296f8b3b1ac434f18676f3b00ef6250e
 target: esp32s3
 version: 2.0.0

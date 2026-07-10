@@ -28,11 +28,17 @@ CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_FREERTOS_HZ=1000
 
-# Chunk 1 keeps the console on USB-Serial-JTAG. Chunk 2 installs TinyUSB for
-# HID, which takes over the same USB PHY and kills this console; that build
-# must move the console to UART0 or accept losing it.
+# Early boot logs on USB-Serial-JTAG; once hid_kbd_start() installs TinyUSB the
+# PHY moves to the OTG controller and esp_tusb_init_console() redirects the log
+# to the composite CDC interface. The device re-enumerates at that moment.
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
+
+# TinyUSB: one CDC (console) + one HID (keyboard), on core 0 with the radio.
+CONFIG_TINYUSB_CDC_ENABLED=y
+CONFIG_TINYUSB_CDC_COUNT=1
+CONFIG_TINYUSB_HID_COUNT=1
+CONFIG_TINYUSB_TASK_AFFINITY_CPU0=y
 
 # TLS to api.openai.com chains to GTS Root R4 (cross-signed by GlobalSign).
 # The FULL bundle is used rather than the reduced filter because I could not
