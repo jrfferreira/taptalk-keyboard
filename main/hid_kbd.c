@@ -7,20 +7,24 @@
 #include "core/typeplan.h"
 #include "core/textnorm.h"
 #include "esp_check.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "stt_client.h"
 
 static const char *TAG = "hid";
 
-#define TYPE_CAP 1200
+/* Sized from the transcript cap so a max-length dictation is never cut here;
+ * lives in PSRAM because internal RAM is the scarce resource. */
+#define TYPE_CAP STT_TRANSCRIPT_CAP
 
 /* The typing task does one of three things per wake-up. s_op says which; it is
  * set before the notify and read once at the top of the loop, so a single
  * writer at a time is guaranteed by the state machine that drives it. */
 typedef enum { OP_TYPE, OP_SEND, OP_UNDO } hid_op_t;
 
-static char s_text[TYPE_CAP];
+static char *s_text; /* TYPE_CAP bytes, allocated on first hid_kbd_type() */
 static TaskHandle_t s_task;
 static volatile bool s_abort;
 static volatile hid_op_t s_op;
@@ -340,7 +344,13 @@ esp_err_t hid_kbd_type(const char *utf8)
     if (s_task == NULL || utf8 == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    snprintf(s_text, sizeof(s_text), "%s", utf8);
+    if (s_text == NULL) {
+        s_text = heap_caps_malloc(TYPE_CAP, MALLOC_CAP_SPIRAM);
+        if (s_text == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+    snprintf(s_text, TYPE_CAP, "%s", utf8);
     s_op    = OP_TYPE;
     s_abort = false;
     xTaskNotifyGive(s_task);
