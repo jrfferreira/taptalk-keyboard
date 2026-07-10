@@ -52,6 +52,7 @@ static sm_guards_t current_guards(void)
         .provisioned = config_is_provisioned(&s_cfg),
         .wifi_up     = s_wifi_up,
         .time_ok     = s_time_ok,
+        .time_required = config_stt_uses_tls(&s_cfg),
         /* A host that has enumerated us, not merely a cable delivering power. */
         .usb_mounted  = s_usb,
         .clip_usable  = audio_clip_usable(),
@@ -103,7 +104,7 @@ static void run_actions(uint32_t actions)
         size_t total = 0;
         const uint8_t *wav = audio_clip_wav(&total);
         ui_set_status("Transcribing...");
-        if (stt_start(s_cfg.api_key, wav, total) != ESP_OK) {
+        if (stt_start(&s_cfg, wav, total) != ESP_OK) {
             ui_set_error(stt_error());
             app_sm_post(EV_STT_FAIL);
         }
@@ -133,8 +134,8 @@ static void run_actions(uint32_t actions)
         beeper_play(BEEP_ERROR);
         ui_set_error(!s_usb                      ? "Not plugged into a computer"
                    : !s_wifi_up                  ? "Wi-Fi not connected"
-                   : !config_has_api_key(&s_cfg) ? "No API key - tap Setup"
-                                                 : "Clock not synced");
+                   : config_stt_uses_tls(&s_cfg) && !s_time_ok ? "Clock not synced"
+                                                               : "Not ready");
     }
     if (actions & ACT_SHOW_ERROR) {
         beeper_play(BEEP_ERROR);

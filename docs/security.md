@@ -4,7 +4,7 @@ Read this before you put a real API key on the device.
 
 ## The key is not protected at rest
 
-The OpenAI API key is stored in **plaintext in NVS**, which lives in the
+The transcription API key is stored in **plaintext in NVS**, which lives in the
 board's unencrypted SPI flash.
 
 **Anyone with physical access to the board and a USB cable can read it:**
@@ -35,13 +35,14 @@ That is not a bug. It is the consequence of a deliberate choice:
   `main/secrets.h`.** That file is gitignored, and `config_store.c` only reads
   it to seed NVS on a development build, but a binary built with it has your
   credentials compiled in.
-- **Scope the key.** Create a project-scoped OpenAI key used only by this
-  device, with a spend limit, so a leak is bounded and revocable.
+- **Scope the key.** Create a provider key used only by this device, with a
+  spend limit where the provider supports one, so a leak is bounded and
+  revocable. A local endpoint may not need a key at all.
 
 ## The setup portal
 
 When the device has no stored SSID it raises a Wi-Fi access point and serves a
-form. Both your Wi-Fi password and your API key cross that link.
+form. Your Wi-Fi password, endpoint, and API key cross that link.
 
 - The AP is **WPA2-PSK**, not open. The passphrase is **regenerated from the
   hardware RNG on every boot** and shown only on the device's screen. It is
@@ -87,11 +88,11 @@ both the Wi-Fi password and the key in plaintext.
 |---|---|
 | On your Wi-Fi network | Cannot reach the key. The device runs no server in normal mode. |
 | Near the device during setup | Must break WPA2 with a random per-boot passphrase they cannot see. |
-| Holding the device for 60 seconds with a USB cable | **Has your API key.** |
+| Holding the device for 60 seconds with a USB cable | **Has your API key and endpoint.** |
 | Holding the device, flash encryption enabled | Does not have the key. Not implemented; see above. |
 
 ## If a key leaks
 
-Revoke it at <https://platform.openai.com/api-keys>. Then erase the device via
-the setup portal and provision a new key. Nothing else on the device is
-sensitive; the Wi-Fi password is the other thing worth rotating.
+Revoke it with the provider. Then erase the device via the setup portal and
+provision a new key. The Wi-Fi password is the other sensitive value worth
+rotating.

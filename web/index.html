@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>TapTalk Keyboard — speak, and it types</title>
-<meta name="description" content="Turn a Waveshare ESP32-S3 AMOLED board into a hold-to-talk speech-to-text USB keyboard. Install from your browser.">
+<meta name="description" content="A driverless hold-to-talk USB keyboard for any OpenAI-compatible transcription endpoint. No desktop app or companion software.">
 <meta property="og:title" content="TapTalk Keyboard">
-<meta property="og:description" content="Hold the button. Speak. Let go. Your words are typed into whatever it's plugged into.">
+<meta property="og:description" content="Hold the button. Speak. Let go. It types into any host that accepts a USB keyboard — with OpenAI or your own compatible endpoint.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>">
 <style>
   :root {
@@ -350,10 +350,11 @@
 <div class="wrap">
 
 <header>
-  <span class="eyebrow"><span class="dot"></span>v0.2.0 · speech → keystrokes</span>
+  <span class="eyebrow"><span class="dot"></span>driverless · speech → keystrokes</span>
   <h1>Speak.<br>It <span class="accent">types</span>.</h1>
   <p class="tagline">Hold the button, say your piece, let go. The words land wherever
-  your cursor is — because the board pretends to be a keyboard.</p>
+  your cursor is — because the board is a standard USB keyboard. No desktop app,
+  driver, or companion software.</p>
 </header>
 
 <div class="stage">
@@ -488,7 +489,7 @@
       This page has to be served over <code>https</code> for the installer to run.
     </div>
   </esp-web-install-button>
-  <p class="beneath">Takes about a minute · Needs a <strong>USB-C data cable</strong> · Nothing is baked in, you configure it after</p>
+  <p class="beneath">Takes about a minute · Needs a <strong>USB-C data cable</strong> · Configure your endpoint after flashing</p>
 </div>
 
 
@@ -508,8 +509,8 @@
   <ol class="steps">
     <li><b>Flash it</b><span>Plug the board in, click the button above, pick it from the chooser.</span></li>
     <li><b>Scan the QR code</b><span>The screen raises its own Wi-Fi network. Join it from your phone and a setup page opens by itself.</span></li>
-    <li><b>Hand it your Wi-Fi and an API key</b><span>Both are stored on the device. It restarts and joins your network.</span></li>
-    <li><b>Hold, speak, release</b><span>The transcript is typed into whatever the USB-C cable is plugged into.</span></li>
+    <li><b>Choose your transcription</b><span>Use OpenAI, another compatible service, or your own server. Add an API key only when that endpoint needs one.</span></li>
+    <li><b>Hold, speak, release</b><span>The transcript is typed into any host that accepts a USB keyboard. No driver or desktop app required.</span></li>
   </ol>
 </section>
 
@@ -536,16 +537,19 @@
 </section>
 
 <section>
-  <h2>Getting an API key</h2>
-  <div class="cards">
+  <h2>Your service, your choice</h2>
+  <div class="cards two">
     <div class="card">
       <ol class="steps plain">
-        <li><b>Open your OpenAI account</b><span>Go to <a href="https://platform.openai.com/api-keys" rel="noopener">platform.openai.com/api-keys</a> and sign in. This is the developer platform, not ChatGPT — a ChatGPT Plus subscription does not include API access.</span></li>
-        <li><b>Put a little credit on it</b><span>Under <em>Billing</em>, add a payment method and buy some credit. A key on an account with no balance returns <code>insufficient_quota</code> and the device shows an upload error. Five dollars goes a long way; transcription is billed per minute of audio (<a href="https://openai.com/api/pricing/" rel="noopener">current rates</a>).</span></li>
-        <li><b>Create a project key</b><span>Click <em>Create new secret key</em> and scope it to a project used only by this device. If the key ever leaks, you revoke that one key and nothing else breaks.</span></li>
-        <li><b>Set a spend limit</b><span>Under <em>Settings → Limits</em>, cap the monthly budget for that project. This is the single thing that turns a leaked key from a bill into an inconvenience.</span></li>
-        <li><b>Copy it now</b><span>The key starts with <code>sk-</code> and is shown exactly once. Paste it straight into the device's setup page — the easiest way is to open that page on the phone where your password manager lives.</span></li>
+        <li><b>Use OpenAI</b><span>The default endpoint and model are ready for your own OpenAI key. ChatGPT subscriptions do not include API usage; create a dedicated project key, set a budget, and paste it during setup.</span></li>
+        <li><b>Or use any compatible endpoint</b><span>Enter an OpenAI-compatible <code>/v1/audio/transcriptions</code> URL, its model name, and a key only if that server requires one.</span></li>
       </ol>
+    </div>
+    <div class="card">
+      <h3>Run it your way</h3>
+      <p>TapTalk does not choose, operate, or bill for a transcription service. It sends your recording to the endpoint you configure, then types the returned text.</p>
+      <p>A server on your home network can use plain HTTP and no API key. Use HTTPS for every endpoint outside a trusted LAN.</p>
+      <p><a href="https://github.com/jrfferreira/taptalk-keyboard/blob/main/docs/custom-endpoints.md">Custom endpoint format and security notes</a></p>
     </div>
   </div>
 </section>
@@ -578,11 +582,11 @@
     <div class="card danger">
       <h3>
         <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-        Your API key is not encrypted
+        Your endpoint and API key are not encrypted
       </h3>
-      <p>Anyone holding this board with a USB cable can read the key back out of
-      flash. Use a project-scoped key with a spend limit, and erase it before you
-      lend the device. <a href="https://github.com/jrfferreira/taptalk-keyboard/blob/main/docs/security.md">The reasoning, in full.</a></p>
+      <p>Anyone holding this board with a USB cable can read the endpoint and key
+      from flash. Use a dedicated, limited key when your service needs one, and erase
+      the device before you lend it. <a href="https://github.com/jrfferreira/taptalk-keyboard/blob/main/docs/security.md">The reasoning, in full.</a></p>
     </div>
 
     <div class="card">
@@ -603,9 +607,10 @@
     <table>
       <tr><td>Display, touch, and the hold-to-talk screen</td><td class="yes">works</td></tr>
       <tr><td>Microphone capture, with a live level meter</td><td class="yes">works</td></tr>
-      <tr><td>Wi-Fi, clock sync, and on-device setup</td><td class="yes">works</td></tr>
-      <tr><td>Sending audio away to be transcribed</td><td class="yes">works</td></tr>
-      <tr><td>Typing the transcript as a USB keyboard</td><td class="yes">works</td></tr>
+      <tr><td>Wi-Fi and on-device setup</td><td class="yes">works</td></tr>
+      <tr><td>OpenAI transcription over HTTPS</td><td class="yes">works</td></tr>
+      <tr><td>Custom OpenAI-compatible endpoint</td><td class="no">hardware test next</td></tr>
+      <tr><td>Typing as a driverless USB keyboard</td><td class="yes">works</td></tr>
       <tr><td>Portuguese ABNT2 keyboard layout</td><td class="no">next</td></tr>
     </table>
   </div>
@@ -620,6 +625,7 @@
   <a href="https://github.com/jrfferreira/taptalk-keyboard">Source</a>
   <a href="https://github.com/jrfferreira/taptalk-keyboard/blob/main/docs/hardware-v1.md">Hardware notes</a>
   <a href="https://github.com/jrfferreira/taptalk-keyboard/blob/main/docs/security.md">Security</a>
+  <a href="https://github.com/jrfferreira/taptalk-keyboard/blob/main/docs/custom-endpoints.md">Custom endpoints</a>
   <span>Built for the Waveshare ESP32-S3-Touch-AMOLED-1.8</span>
 </footer>
 

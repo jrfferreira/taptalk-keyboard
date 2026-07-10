@@ -8,7 +8,7 @@ static sm_out_t out(app_state_t next, uint32_t actions)
 
 static bool ready_to_record(const sm_guards_t *g)
 {
-    return g->wifi_up && g->time_ok && g->usb_mounted;
+    return g->wifi_up && (!g->time_required || g->time_ok) && g->usb_mounted;
 }
 
 sm_out_t sm_step(app_state_t state, app_event_t event, const sm_guards_t *g)
@@ -44,7 +44,10 @@ sm_out_t sm_step(app_state_t state, app_event_t event, const sm_guards_t *g)
         return ignore;
 
     case ST_WIFI_CONNECTING:
-        if (event == EV_WIFI_UP) return out(ST_TIME_SYNC, ACT_SNTP_START);
+        if (event == EV_WIFI_UP) {
+            return g->time_required ? out(ST_TIME_SYNC, ACT_SNTP_START)
+                                    : out(ST_IDLE_READY, ACT_NONE);
+        }
         /* The escape hatch for a wrong password: the user can reopen the
          * portal without waiting for the retry ladder to run out. */
         if (event == EV_ENTER_SETUP) return out(ST_PROVISIONING, ACT_PROV_START);
