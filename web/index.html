@@ -93,20 +93,116 @@
 
   /* --------------------------------------------------------------- device */
   .stage { display: flex; justify-content: center; margin: 46px 0 40px; }
-  .device { width: min(240px, 62vw); filter: drop-shadow(0 30px 60px rgba(0,0,0,.6)); }
+  /* One clock for the whole scene. Speak -> waves arrive -> the button goes red
+     -> words are typed. Three separate loops would drift against each other and
+     stop reading as cause and effect. */
+  .stage {
+    --cycle: 7.2s;
+    display: flex; align-items: center; justify-content: center;
+    gap: clamp(6px, 2.4vw, 26px);
+    position: relative; z-index: 1;
+  }
 
-  /* The mic button breathes, and the meter bars twitch, so the page shows
-     what "hold to talk" means without a video. */
-  .pulse { transform-box: fill-box; transform-origin: 50% 50%; animation: pulse 2.8s ease-in-out infinite; }
-  @keyframes pulse { 0%,100% { opacity: .35; transform: scale(1) } 50% { opacity: 0; transform: scale(1.35) } }
+  .device { width: min(240px, 62vw); filter: drop-shadow(0 30px 60px rgba(0,0,0,.6)); flex: 0 0 auto; }
 
-  /* transform-box defaults to view-box on SVG, so scaleY would pivot on the
-     bottom of the whole drawing and fling the bars around. fill-box pins each
-     bar to its own base. */
-  .lvl {
-    transform-box: fill-box;
-    transform-origin: 50% 100%;
-    animation: lvl 1.5s ease-in-out infinite;
+  /* ---- left: sound arriving ---- */
+  .waves { width: clamp(44px, 11vw, 78px); flex: 0 0 auto; overflow: visible; }
+  .waves .arc {
+    fill: none; stroke: var(--mint); stroke-width: 3.4; stroke-linecap: round;
+    transform-box: fill-box; transform-origin: 0% 50%;
+    animation: ripple 1.5s ease-out infinite;
+  }
+  .waves .arc:nth-of-type(2) { animation-delay: .22s }
+  .waves .arc:nth-of-type(3) { animation-delay: .44s }
+  .waves .mouth { fill: var(--mint); }
+  @keyframes ripple {
+    0%   { opacity: 0;  transform: translateX(-3px) scaleX(.7) }
+    18%  { opacity: .85 }
+    100% { opacity: 0;  transform: translateX(9px) scaleX(1.06) }
+  }
+  /* The ripples run on their own short loop; this gates the whole group to the
+     speaking window of the cycle. */
+  .waves { animation: speaking var(--cycle) linear infinite; }
+  @keyframes speaking {
+    0%, 6%    { opacity: 0 }
+    10%, 43%  { opacity: 1 }
+    47%, 100% { opacity: 0 }
+  }
+
+  /* ---- centre: the device reacts ---- */
+  .pulse {
+    transform-box: fill-box; transform-origin: 50% 50%;
+    animation: pulse var(--cycle) ease-out infinite;
+  }
+  @keyframes pulse {
+    0%        { opacity: .55; transform: scale(1) }
+    9%        { opacity: 0;   transform: scale(1.34) }
+    100%      { opacity: 0;   transform: scale(1) }
+  }
+
+  /* Green at rest, red while recording — the same swap the firmware makes. */
+  .rec { opacity: 0; animation: recording var(--cycle) ease-in-out infinite; }
+  @keyframes recording {
+    0%, 4%    { opacity: 0 }
+    9%, 43%   { opacity: 1 }
+    48%, 100% { opacity: 0 }
+  }
+
+  /* The meter is quiet until there is something to hear. */
+  .wave-group {
+    transform-box: fill-box; transform-origin: 50% 50%;
+    animation: meter var(--cycle) ease-in-out infinite;
+  }
+  @keyframes meter {
+    0%, 6%    { transform: scaleY(.28) }
+    12%, 42%  { transform: scaleY(1) }
+    48%, 100% { transform: scaleY(.28) }
+  }
+
+
+  /* ---- right: the words land ---- */
+  .transcript {
+    width: clamp(112px, 24vw, 190px); flex: 0 0 auto;
+    font: 500 clamp(11px, 1.5vw, 14px)/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--fg);
+  }
+  .transcript .cap {
+    display: block; margin-bottom: 8px;
+    font: 600 10px/1 system-ui, sans-serif; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--fg-dim);
+  }
+  /* steps() quantises the width so characters appear one at a time rather than
+     sliding into view. */
+  .typed {
+    display: inline-block; vertical-align: bottom;
+    overflow: hidden; white-space: nowrap; width: 0;
+    border-right: 2px solid var(--mint);
+    animation: type var(--cycle) steps(16, end) infinite,
+               caret .9s step-end infinite;
+  }
+  @keyframes type {
+    0%, 50%   { width: 0 }
+    84%, 95%  { width: 16ch }
+    100%      { width: 0 }
+  }
+  @keyframes caret { 0%, 100% { border-color: var(--mint) } 50% { border-color: transparent } }
+
+  @media (max-width: 720px) {
+    /* No room for three columns. The waves are decorative; the typed line is
+       the point, so it moves below the device where it still reads as output. */
+    .stage { flex-direction: column; gap: 18px; }
+    .waves { display: none; }
+    .transcript { width: min(300px, 84vw); text-align: center; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .waves, .pulse, .rec, .wave-group, .lvl, .typed, .eyebrow .dot { animation: none; }
+    .pulse { opacity: .25 }
+    .waves { opacity: .5 }
+    .rec { opacity: 0 }
+    .wave-group { transform: none }
+    /* Show the finished sentence rather than an empty box. */
+    .typed { width: 16ch; border-right-color: transparent; }
   }
   .lvl:nth-of-type(7n+1) { animation-delay: 0s }    .lvl:nth-of-type(7n+2) { animation-delay: .15s }
   .lvl:nth-of-type(7n+3) { animation-delay: .3s }   .lvl:nth-of-type(7n+4) { animation-delay: .05s }
@@ -274,6 +370,12 @@
 </header>
 
 <div class="stage">
+  <svg class="waves" viewBox="-6 0 56 120" aria-hidden="true">
+    <circle class="mouth" cx="0" cy="60" r="3.4"/>
+    <path class="arc" d="M0 40 A 20 20 0 0 1 0 80"/>
+    <path class="arc" d="M0 28 A 32 32 0 0 1 0 92"/>
+    <path class="arc" d="M0 16 A 44 44 0 0 1 0 104"/>
+  </svg>
   <!-- Stylised 368×448 AMOLED, drawn to match the real UI. -->
   <svg class="device" viewBox="0 0 368 448" role="img" aria-label="The device: a large hold-to-talk button filling the middle of a round-cornered AMOLED screen, with a USB icon in the top-left corner, Wi-Fi in the top-right, a live microphone waveform in the bottom-left and a settings cog in the bottom-right">
       <defs>
@@ -290,6 +392,10 @@
         </linearGradient>
         <linearGradient id="btn" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stop-color="#5cf0b0"/><stop offset="1" stop-color="#1b8560"/>
+        </linearGradient>
+        <!-- C_REC_TOP / C_REC_BOT in main/ui.c -->
+        <linearGradient id="btnRec" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#ff7a6e"/><stop offset="1" stop-color="#b3241c"/>
         </linearGradient>
         <!-- The halo: light pooling at the bottom of the glass, under the button. -->
         <radialGradient id="halo" cx=".5" cy=".5" r=".5">
@@ -330,6 +436,7 @@
 
       <circle class="pulse" cx="184" cy="212" r="114" fill="none" stroke="#3ddc97" stroke-width="2"/>
       <circle cx="184" cy="212" r="114" fill="url(#btn)"/>
+      <circle class="rec" cx="184" cy="212" r="114" fill="url(#btnRec)"/>
 
       <!-- microphone -->
       <g transform="translate(184 212)" fill="#04150e">
@@ -339,7 +446,7 @@
       </g>
 
       <!-- bottom-left: the live waveform -->
-      <g transform="translate(48 386)">
+      <g transform="translate(48 386)"><g class="wave-group">
         <rect class="lvl" x="0" y="-19" width="3" height="38" rx="1.5" fill="#3ddc97"/>
         <rect class="lvl" x="7" y="-19" width="3" height="38" rx="1.5" fill="#3ddc97"/>
         <rect class="lvl" x="14" y="-19" width="3" height="38" rx="1.5" fill="#3ddc97"/>
@@ -354,7 +461,7 @@
         <rect class="lvl" x="77" y="-19" width="3" height="38" rx="1.5" fill="#3ddc97"/>
         <rect class="lvl" x="84" y="-19" width="3" height="38" rx="1.5" fill="#3ddc97"/>
         <rect class="lvl" x="91" y="-19" width="3" height="38" rx="1.5" fill="#3ddc97"/>
-      </g>
+      </g></g>
 
       <!-- bottom-right: settings -->
       <g transform="translate(306 384)" stroke="#6b7a88" fill="none">
@@ -366,6 +473,10 @@
         </g>
       </g>
     </svg>
+  <div class="transcript" aria-hidden="true">
+    <span class="cap">types into</span>
+    <span class="typed">meet me at seven</span>
+  </div>
 </div>
 
 <div class="install">
