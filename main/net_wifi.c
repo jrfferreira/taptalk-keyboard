@@ -24,6 +24,11 @@ static const char *TAG = "net";
 
 static uint32_t s_retries;
 static bool s_sta_started;
+static bool s_sta_netif;
+/* Provisioning brings the STA interface up purely to scan. Without this guard
+ * the STA_START handler would try to associate with credentials we do not have
+ * yet, and hammer the retry ladder while the user is still typing them in. */
+static bool s_want_connect;
 
 uint32_t net_wifi_retries(void) { return s_retries; }
 
@@ -32,12 +37,17 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
     (void)arg;
     (void)base;
     if (id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
+        if (s_want_connect) {
+            esp_wifi_connect();
+        }
     } else if (id == WIFI_EVENT_STA_DISCONNECTED) {
+        if (!s_want_connect) {
+            return; /* a scan ended, not a lost connection */
+        }
         const wifi_event_sta_disconnected_t *d = data;
         ESP_LOGW(TAG, "disconnected, reason %d", d->reason);
         s_retries++;
-        ui_set_wifi(false, "");
+        ui_set_wifi(false);
         app_sm_post(EV_WIFI_DOWN);
     }
 }
@@ -52,7 +62,7 @@ static void on_got_ip(void *arg, esp_event_base_t base, int32_t id, void *data)
     snprintf(ip, sizeof(ip), IPSTR, IP2STR(&e->ip_info.ip));
     ESP_LOGI(TAG, "got ip %s", ip);
     s_retries = 0;
-    ui_set_wifi(true, ip);
+    ui_set_wifi(true);
     app_sm_post(EV_WIFI_UP);
 }
 
@@ -80,14 +90,24 @@ esp_err_t net_init_common(void)
     return ESP_OK;
 }
 
+void net_wifi_ensure_sta_netif(void)
+{
+    if (!s_sta_netif) {
+        esp_netif_create_default_wifi_sta();
+        s_sta_netif = true;
+    }
+}
+
 esp_err_t net_wifi_sta_connect(const app_config_t *cfg)
 {
+    s_want_connect = true;
+
     if (s_sta_started) {
         /* A retry: the driver is already up, so just re-associate. */
         return esp_wifi_connect();
     }
 
-    esp_netif_create_default_wifi_sta();
+    net_wifi_ensure_sta_netif();
 
     /* Not snprintf: wifi_config_t.sta.ssid is exactly 32 bytes with no room
      * for a terminator, so snprintf would silently drop the last character of
@@ -130,12 +150,10 @@ static void sntp_task(void *arg)
         gmtime_r(&now, &tm);
         strftime(iso, sizeof(iso), "%Y-%m-%d %H:%M", &tm);
         ESP_LOGI(TAG, "time synced: %s UTC", iso);
-        ui_set_time(true, iso);
         app_sm_post(EV_TIME_OK);
     } else {
         ESP_LOGE(TAG, "SNTP failed (epoch=%lld); TLS would reject every certificate",
                  (long long)now);
-        ui_set_time(false, "");
         app_sm_post(EV_TIME_FAIL);
     }
 

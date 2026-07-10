@@ -108,9 +108,10 @@
     transform-origin: 50% 100%;
     animation: lvl 1.5s ease-in-out infinite;
   }
-  .lvl:nth-of-type(2) { animation-delay: .15s } .lvl:nth-of-type(3) { animation-delay: .3s }
-  .lvl:nth-of-type(4) { animation-delay: .05s } .lvl:nth-of-type(5) { animation-delay: .25s }
-  .lvl:nth-of-type(6) { animation-delay: .4s }  .lvl:nth-of-type(7) { animation-delay: .1s }
+  .lvl:nth-of-type(7n+1) { animation-delay: 0s }    .lvl:nth-of-type(7n+2) { animation-delay: .15s }
+  .lvl:nth-of-type(7n+3) { animation-delay: .3s }   .lvl:nth-of-type(7n+4) { animation-delay: .05s }
+  .lvl:nth-of-type(7n+5) { animation-delay: .25s }  .lvl:nth-of-type(7n+6) { animation-delay: .4s }
+  .lvl:nth-of-type(7n+7) { animation-delay: .1s }
   @keyframes lvl { 0%,100% { transform: scaleY(.3) } 50% { transform: scaleY(1) } }
 
   @media (prefers-reduced-motion: reduce) {
@@ -249,6 +250,21 @@
   a { color: #7fc8ff; text-decoration-color: rgba(127,200,255,.35); text-underline-offset: 2px; }
   a:hover { text-decoration-color: currentColor; }
 
+  a.buy {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-weight: 600; font-size: 15px; text-decoration: none;
+    color: var(--fg); background: var(--bg-elev-2);
+    border: 1px solid var(--line); border-radius: 10px; padding: 11px 18px;
+    transition: border-color .12s ease, transform .12s ease;
+  }
+  a.buy:hover { border-color: var(--mint); transform: translateY(-1px); }
+  a.buy:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
+  a.buy .ic { color: var(--fg-faint); }
+
+  /* Sits next to the link, not in the footer: an affiliate link is a paid
+     endorsement, and the FTC wants it disclosed at the point of decision. */
+  .disclosure { margin-top: 10px !important; font-size: 13px; color: var(--fg-faint) !important; }
+
   footer {
     margin: 72px 0 40px; padding-top: 22px; border-top: 1px solid var(--line-soft);
     color: var(--fg-faint); font-size: 14px;
@@ -268,13 +284,17 @@
 
 <div class="stage">
   <!-- Stylised 368×448 AMOLED, drawn to match the real UI. -->
-  <svg class="device" viewBox="0 0 368 448" role="img" aria-label="The device showing a large hold-to-talk button and a microphone level meter">
+  <svg class="device" viewBox="0 0 368 448" role="img" aria-label="The device: a large hold-to-talk button above a live microphone waveform, with USB, Wi-Fi and settings icons along the bottom">
     <defs>
       <linearGradient id="bezel" x1="0" y1="0" x2="0" y2="1">
         <stop offset="0" stop-color="#2b3540"/><stop offset="1" stop-color="#141a20"/>
       </linearGradient>
+      <!-- The same stops the firmware uses; see C_BG_* and C_IDLE_* in main/ui.c -->
+      <linearGradient id="screen" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#05070a"/><stop offset="1" stop-color="#141e28"/>
+      </linearGradient>
       <linearGradient id="btn" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stop-color="#4ee6a5"/><stop offset="1" stop-color="#25a473"/>
+        <stop offset="0" stop-color="#5cf0b0"/><stop offset="1" stop-color="#1b8560"/>
       </linearGradient>
       <linearGradient id="glass" x1="0" y1="0" x2="1" y2="1">
         <stop offset="0" stop-color="#fff" stop-opacity=".07"/>
@@ -283,36 +303,65 @@
     </defs>
 
     <rect x="2" y="2" width="364" height="444" rx="46" fill="url(#bezel)"/>
-    <rect x="11" y="11" width="346" height="426" rx="38" fill="#05080a"/>
+    <rect x="11" y="11" width="346" height="426" rx="38" fill="url(#screen)"/>
 
-    <text x="184" y="52" text-anchor="middle" fill="#e8edf2" font-family="system-ui,sans-serif" font-size="17" font-weight="600">TapTalk</text>
-    <text x="184" y="74" text-anchor="middle" fill="#6b7885" font-family="system-ui,sans-serif" font-size="12" letter-spacing="1.4">IDLE_READY</text>
+    <circle class="pulse" cx="184" cy="178" r="108" fill="none" stroke="#3ddc97" stroke-width="2"/>
+    <circle cx="184" cy="178" r="108" fill="url(#btn)"/>
 
-    <circle class="pulse" cx="184" cy="232" r="86" fill="none" stroke="#3ddc97" stroke-width="2"/>
-    <circle cx="184" cy="232" r="86" fill="url(#btn)"/>
-    <circle cx="184" cy="232" r="86" fill="none" stroke="#6ff0b8" stroke-opacity=".4"/>
-
-    <!-- microphone glyph -->
-    <g transform="translate(184 218)" fill="#06251a">
-      <rect x="-9" y="-24" width="18" height="30" rx="9"/>
-      <path d="M-16 0a16 16 0 0 0 32 0" fill="none" stroke="#06251a" stroke-width="4.5" stroke-linecap="round"/>
-      <line x1="0" y1="16" x2="0" y2="24" stroke="#06251a" stroke-width="4.5" stroke-linecap="round"/>
-    </g>
-    <text x="184" y="268" text-anchor="middle" fill="#06251a" font-family="system-ui,sans-serif" font-size="14" font-weight="700" letter-spacing=".5">HOLD TO TALK</text>
-
-    <!-- live level meter: the thing chunk 1 exists to prove -->
-    <g transform="translate(119 350)">
-      <rect class="lvl" x="0"  y="-26" width="10" height="26" rx="3" fill="#3ddc97"/>
-      <rect class="lvl" x="20" y="-26" width="10" height="26" rx="3" fill="#3ddc97"/>
-      <rect class="lvl" x="40" y="-26" width="10" height="26" rx="3" fill="#3ddc97"/>
-      <rect class="lvl" x="60" y="-26" width="10" height="26" rx="3" fill="#3ddc97"/>
-      <rect class="lvl" x="80" y="-26" width="10" height="26" rx="3" fill="#3ddc97"/>
-      <rect class="lvl" x="100" y="-26" width="10" height="26" rx="3" fill="#3ddc97"/>
-      <rect class="lvl" x="120" y="-26" width="10" height="26" rx="3" fill="#3ddc97"/>
+    <!-- microphone, built from the same primitives as build_mic() in main/ui.c -->
+    <g transform="translate(184 178)" fill="#04150e">
+      <rect x="-11" y="-34" width="22" height="40" rx="11"/>
+      <path d="M-28 -10a28 28 0 0 0 56 0" fill="none" stroke="#04150e" stroke-width="5" stroke-linecap="round"/>
+      <rect x="-2.5" y="15" width="5" height="10" rx="2"/>
     </g>
 
-    <text x="34" y="400" fill="#6b7885" font-family="ui-monospace,monospace" font-size="11">WiFi up · 192.168.1.42</text>
-    <text x="34" y="418" fill="#6b7885" font-family="ui-monospace,monospace" font-size="11">ALDO1 on 3300mV</text>
+    <!-- the live waveform -->
+    <g transform="translate(102 336)">
+      <rect class="lvl" x="0  " y="-24" width="4" height="48" rx="2" fill="#3ddc97"/>
+      <rect class="lvl" x="8  " y="-24" width="4" height="48" rx="2" fill="#3ddc97"/>
+      <rect class="lvl" x="16 " y="-24" width="4" height="48" rx="2" fill="#3ddc97"/>
+      <rect class="lvl" x="24 " y="-24" width="4" height="48" rx="2" fill="#3ddc97"/>
+      <rect class="lvl" x="32 " y="-24" width="4" height="48" rx="2" fill="#3ddc97"/>
+      <rect class="lvl" x="40 " y="-24" width="4" height="48" rx="2" fill="#3ddc97"/>
+      <rect class="lvl" x="48 " y="-24" width="4" height="48" rx="2" fill="#3ddc97"/>
+      <rect class="lvl" x="56 " y="-24" width="4" height="48" rx="2" fill="#3ddc97"/>
+      <rect class="lvl" x="64 " y="-24" width="4" height="48" rx="2" fill="#3ddc97"/>
+      <rect class="lvl" x="72 " y="-24" width="4" height="48" rx="2" fill="#3ddc97"/>
+      <rect class="lvl" x="80 " y="-24" width="4" height="48" rx="2" fill="#3ddc97"/>
+      <rect class="lvl" x="88 " y="-24" width="4" height="48" rx="2" fill="#3ddc97"/>
+      <rect class="lvl" x="96 " y="-24" width="4" height="48" rx="2" fill="#3ddc97"/>
+      <rect class="lvl" x="104" y="-24" width="4" height="48" rx="2" fill="#3ddc97"/>
+      <rect class="lvl" x="112" y="-24" width="4" height="48" rx="2" fill="#3ddc97"/>
+      <rect class="lvl" x="120" y="-24" width="4" height="48" rx="2" fill="#3ddc97"/>
+      <rect class="lvl" x="128" y="-24" width="4" height="48" rx="2" fill="#3ddc97"/>
+      <rect class="lvl" x="136" y="-24" width="4" height="48" rx="2" fill="#3ddc97"/>
+      <rect class="lvl" x="144" y="-24" width="4" height="48" rx="2" fill="#3ddc97"/>
+      <rect class="lvl" x="152" y="-24" width="4" height="48" rx="2" fill="#3ddc97"/>
+      <rect class="lvl" x="160" y="-24" width="4" height="48" rx="2" fill="#3ddc97"/>
+    </g>
+
+    <!-- status icons: USB and Wi-Fi lit, settings dim -->
+    <g stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <g transform="translate(114 398)" stroke="#3ddc97">
+        <path d="M0 10V-8"/>
+        <circle cx="0" cy="12" r="2.6" fill="#3ddc97" stroke="none"/>
+        <path d="M0-12l-4.2 5h8.4z" fill="#3ddc97" stroke="none"/>
+        <path d="M0 1l-7-4.5V-8"/>
+        <rect x="-9.4" y="-11" width="4.8" height="3.6" fill="#3ddc97" stroke="none"/>
+        <path d="M0 5l7-4.5v-4"/>
+        <circle cx="7" cy="-5" r="2.4" fill="#3ddc97" stroke="none"/>
+      </g>
+      <g transform="translate(184 398)" stroke="#3ddc97">
+        <path d="M-13-4a18 18 0 0 1 26 0"/>
+        <path d="M-8 2a11 11 0 0 1 16 0"/>
+        <circle cx="0" cy="9" r="2.2" fill="#3ddc97" stroke="none"/>
+      </g>
+      <g transform="translate(254 398)" stroke="#39434d">
+        <circle cx="0" cy="0" r="8.5"/>
+        <circle cx="0" cy="0" r="3.2"/>
+        <path d="M0-11.6v-2.4M0 11.6v2.4M-11.6 0h-2.4M11.6 0h2.4M-8.2-8.2l-1.7-1.7M8.2 8.2l1.7 1.7M-8.2 8.2l-1.7 1.7M8.2-8.2l1.7-1.7"/>
+      </g>
+    </g>
 
     <rect x="11" y="11" width="346" height="426" rx="38" fill="url(#glass)"/>
   </svg>
@@ -458,25 +507,25 @@
   </p>
 </section>
 
-<!-- WHERE TO BUY — drop this section in once the affiliate URL exists.
-     Two rules it must keep:
-       1. The listing has to be the V1 board (SH8601 / FT3168). If the seller
-          does not state the revision, keep the "check the sticker" line.
-       2. The disclosure stays next to the link, not in the footer. An
-          affiliate link is a paid endorsement; the FTC and AliExpress's own
-          affiliate terms both want it disclosed at the point of decision.
-
 <section>
   <h2>Get the board</h2>
   <div class="card">
-    <h3>Waveshare ESP32-S3-Touch-AMOLED-1.8</h3>
-    <p>Around $30. Make sure the listing is the <strong>V1</strong> revision, and
-    check the sticker when it arrives: <code>SH8601</code> and <code>FT3168</code>.</p>
-    <p style="margin-top:14px"><a class="buy" href="AFFILIATE_URL_HERE" rel="nofollow sponsored noopener" target="_blank">Buy on AliExpress</a></p>
-    <p class="beneath" style="margin-top:8px">Affiliate link — I earn a small commission, at no extra cost to you.</p>
+    <h3>
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M8 6V4h8v2"/></svg>
+      Waveshare ESP32-S3-Touch-AMOLED-1.8
+    </h3>
+    <p>The listing does not state its revision. When it arrives, check the sticker
+    on the back: it must say <code>SH8601</code> and <code>FT3168</code>. A V2 board
+    (<code>CO5300</code> / <code>CST816</code>) will not display this firmware.</p>
+    <p style="margin-top:16px">
+      <a class="buy" href="https://s.click.aliexpress.com/e/_c349By9V" rel="nofollow sponsored noopener" target="_blank">
+        Buy on AliExpress
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>
+      </a>
+    </p>
+    <p class="disclosure">Affiliate link — I earn a small commission, at no extra cost to you.</p>
   </div>
 </section>
--->
 
 <footer>
   <a href="https://github.com/jrfferreira/taptalk-keyboard">Source</a>
