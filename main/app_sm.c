@@ -163,13 +163,18 @@ static void sm_task(void *arg)
         app_event_t ev;
         diag_beat_sm();
         if (xQueueReceive(s_queue, &ev, pdMS_TO_TICKS(TICK_MS)) != pdTRUE) {
-            /* Idle tick. No enumerated host means nothing to type into, so
-             * recording is pointless and the USB icon must say so. */
+            /* Idle tick.
+             *
+             * The record GUARD tracks tud_mounted(): an enumerated host is what
+             * makes typing possible. The ICON tracks the PMIC's VBUS-good bit,
+             * because tud_mounted() is configured bus-powered and never reports
+             * a cable unplug on a board that keeps running on battery -- so the
+             * icon would otherwise stay lit forever. Two signals, two meanings. */
             const bool usb_now = hid_kbd_mounted();
             if (usb_now != s_usb) {
-                ui_set_usb(usb_now);
                 app_sm_post(usb_now ? EV_USB_MOUNT : EV_USB_UNMOUNT);
             }
+            ui_set_usb(pmic_vbus_present());
 
             /* An error state clears itself so the device does not strand the
              * user on a dead screen — unless it is unprovisioned, in which
