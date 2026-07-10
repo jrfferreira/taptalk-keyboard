@@ -58,7 +58,6 @@ static const char *TAG = "ui";
 #define C_INK      0x04150E
 #define C_ON       0x3DDC97
 #define C_OFF      0x39434D
-#define C_COG      0x6B7A88
 #define C_MSG      0xF5B638
 #define C_STATUS   0x8A97A3
 
@@ -71,6 +70,7 @@ typedef struct {
     bool usb;
     char msg[80];
     bool msg_is_error;
+    bool pending; /* a dictation is typed and can be sent or undone */
 } ui_model_t;
 
 static ui_model_t s_model;
@@ -79,6 +79,7 @@ static SemaphoreHandle_t s_lock;
 static lv_obj_t *s_main, *s_setup;
 static lv_obj_t *s_btn, *s_mic, *s_timer, *s_spinner, *s_status;
 static lv_obj_t *s_ico_usb, *s_ico_wifi, *s_badge, *s_badge_hit;
+static lv_obj_t *s_send_hit, *s_undo_hit; /* bottom-corner Send / Undo actions */
 static lv_obj_t *s_sheet, *s_sheet_text;
 static lv_obj_t *s_spec[SPEC_BARS];
 
@@ -107,6 +108,7 @@ void ui_set_spectrum(const uint8_t *bands)
 }
 void ui_set_wifi(bool connected) { MODEL_SET(wifi, connected); }
 void ui_set_usb(bool connected) { MODEL_SET(usb, connected); }
+void ui_set_pending(bool pending) { MODEL_SET(pending, pending); }
 
 void ui_set_clip(uint32_t ms, int peak)
 {
@@ -156,7 +158,8 @@ static void ui_tick(lv_timer_t *timer)
     static char last_msg[sizeof(m.msg)] = {1};
 
     const bool rec = (m.state == ST_RECORDING);
-    const bool busy = (m.state == ST_UPLOADING || m.state == ST_TYPING);
+    const bool busy =
+        (m.state == ST_UPLOADING || m.state == ST_TYPING || m.state == ST_SENDING);
 
     if ((int)rec != last_rec) {
         last_rec = rec;
@@ -191,10 +194,10 @@ static void ui_tick(lv_timer_t *timer)
         }
     }
 
-    /* While a clip is uploading or being typed, the button is inert: the state
-     * machine ignores a press in those states, but a bright button invites one.
-     * Dim it and drop LV_OBJ_FLAG_CLICKABLE so it neither reacts nor lights up
-     * until the transcript has landed. */
+    /* While a clip is uploading, being typed, or being sent, the button is
+     * inert: the state machine ignores a press in those states, but a bright
+     * button invites one. Dim it and drop LV_OBJ_FLAG_CLICKABLE so it neither
+     * reacts nor lights up until the work has landed. */
     static int last_busy = -1;
     if ((int)busy != last_busy) {
         last_busy = busy;
@@ -231,6 +234,25 @@ static void ui_tick(lv_timer_t *timer)
         const int h = SPEC_MIN + (s_spec_shown[i] * (SPEC_H - SPEC_MIN)) / 100;
         if (lv_obj_get_height(s_spec[i]) != h) {
             lv_obj_set_height(s_spec[i], h);
+        }
+    }
+
+    /* Send and Undo only mean anything on a dictation that has landed and not
+     * yet been acted on. Outside that window they are dimmed and drop their
+     * clickable flag, so a stray tap on the corner does nothing. */
+    static int last_live = -1;
+    const bool actions_live = (m.state == ST_IDLE_READY && m.pending);
+    if ((int)actions_live != last_live) {
+        last_live = actions_live;
+        const lv_opa_t opa = actions_live ? LV_OPA_COVER : LV_OPA_30;
+        lv_obj_set_style_opa(s_send_hit, opa, LV_PART_MAIN);
+        lv_obj_set_style_opa(s_undo_hit, opa, LV_PART_MAIN);
+        if (actions_live) {
+            lv_obj_add_flag(s_send_hit, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_flag(s_undo_hit, LV_OBJ_FLAG_CLICKABLE);
+        } else {
+            lv_obj_remove_flag(s_send_hit, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_remove_flag(s_undo_hit, LV_OBJ_FLAG_CLICKABLE);
         }
     }
 
@@ -313,6 +335,12 @@ static void on_press_lost(lv_event_t *e)
 static void on_setup(lv_event_t *e) { (void)e; app_sm_post(EV_ENTER_SETUP); }
 static void on_setup_exit(lv_event_t *e) { (void)e; app_sm_post(EV_SETUP_EXIT); }
 
+/* Send and Undo click (not press/release): they are one-shot taps, not a
+ * hold. The beep confirms the finger; the state machine decides whether there
+ * is anything to act on. */
+static void on_send(lv_event_t *e) { (void)e; beeper_play(BEEP_PRESS); app_sm_post(EV_SEND); }
+static void on_undo(lv_event_t *e) { (void)e; beeper_play(BEEP_PRESS); app_sm_post(EV_UNDO); }
+
 
 
 
@@ -378,6 +406,33 @@ static void build_mic(lv_obj_t *btn)
     lv_obj_remove_flag(s_mic, LV_OBJ_FLAG_CLICKABLE); /* the button handles touch */
 }
 
+/* A bottom-corner action: a 72 px transparent tap target holding a caption over
+ * a glyph, tinted to say what it does. Returns the target so the tick can dim
+ * it and drop its clickable flag while there is nothing to act on. */
+static lv_obj_t *build_action(lv_align_t align, int dx, int dy, const char *icon,
+                              const char *caption, uint32_t color, lv_event_cb_t cb)
+{
+    lv_obj_t *hit = lv_obj_create(s_main);
+    lv_obj_remove_style_all(hit);
+    lv_obj_set_size(hit, ICON_HIT, ICON_HIT);
+    lv_obj_align(hit, align, dx, dy);
+    lv_obj_remove_flag(hit, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(hit, cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *cap = lv_label_create(hit);
+    lv_label_set_text(cap, caption);
+    lv_obj_set_style_text_color(cap, lv_color_hex(color), LV_PART_MAIN);
+    lv_obj_align(cap, LV_ALIGN_CENTER, 0, -12);
+
+    lv_obj_t *ico = lv_label_create(hit);
+    lv_label_set_text(ico, icon);
+    lv_obj_set_style_text_font(ico, FONT_BIG, LV_PART_MAIN);
+    lv_obj_set_style_text_color(ico, lv_color_hex(color), LV_PART_MAIN);
+    lv_obj_align(ico, LV_ALIGN_CENTER, 0, 12);
+
+    return hit;
+}
+
 static void build_main(void)
 {
     s_main = lv_obj_create(NULL);
@@ -440,8 +495,9 @@ static void build_main(void)
     lv_obj_center(s_timer);
     lv_obj_add_flag(s_timer, LV_OBJ_FLAG_HIDDEN);
 
-    /* The spinner takes the mic's place while a clip is transcribing or being
-     * typed. It is a child of the screen, not the button, on purpose: busy
+    /* The spinner takes the mic's place while the device is busy -- a clip
+     * transcribing or being typed, or a Send/Undo chord going out over HID.
+     * It is a child of the screen, not the button, on purpose: busy
      * also dims the whole button to 40%, and a child would be dragged down
      * with it. Kept outside, the disc reads "inert" while the arc spins at
      * full strength and reads "working". White, like the timer -- the two
@@ -469,10 +525,23 @@ static void build_main(void)
     lv_obj_set_style_text_font(s_ico_usb, FONT_BIG, LV_PART_MAIN);
     lv_obj_align(s_ico_usb, LV_ALIGN_TOP_LEFT, EDGE + 20, EDGE + 12);
 
-    s_ico_wifi = lv_label_create(s_main);
+    /* Top-right: the Wi-Fi status glyph doubles as the door to setup. Its
+     * colour still reports the connection (green up, grey down); wrapping it in
+     * a 72 px transparent target makes tapping it open the portal, which is
+     * where you go when the connection is the thing that is wrong. This is why
+     * the bottom-right cog is gone -- setup lives here now. */
+    lv_obj_t *wifi_hit = lv_obj_create(s_main);
+    lv_obj_remove_style_all(wifi_hit);
+    lv_obj_set_size(wifi_hit, ICON_HIT, ICON_HIT);
+    lv_obj_align(wifi_hit, LV_ALIGN_TOP_RIGHT, -EDGE, EDGE);
+    lv_obj_remove_flag(wifi_hit, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(wifi_hit, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(wifi_hit, on_setup, LV_EVENT_CLICKED, NULL);
+
+    s_ico_wifi = lv_label_create(wifi_hit);
     lv_label_set_text(s_ico_wifi, LV_SYMBOL_WIFI);
     lv_obj_set_style_text_font(s_ico_wifi, FONT_BIG, LV_PART_MAIN);
-    lv_obj_align(s_ico_wifi, LV_ALIGN_TOP_RIGHT, -(EDGE + 20), EDGE + 12);
+    lv_obj_center(s_ico_wifi);
 
     /* The spectrum analyser: one bar per FFT band, spanning the full width and
      * anchored to the bottom edge so the bars rise from the floor of the screen.
@@ -498,19 +567,18 @@ static void build_main(void)
     }
     lv_obj_move_background(spec); /* behind the button and the mic */
 
-    /* Bottom-right: setup. A 72 px transparent tap target around a 28 px cog,
-     * because a fingertip is about 9 mm and the glyph is 3. */
-    lv_obj_t *cog_hit = lv_obj_create(s_main);
-    lv_obj_remove_style_all(cog_hit);
-    lv_obj_set_size(cog_hit, ICON_HIT, ICON_HIT);
-    lv_obj_align(cog_hit, LV_ALIGN_BOTTOM_RIGHT, -EDGE, -EDGE);
-    lv_obj_add_flag(cog_hit, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(cog_hit, on_setup, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *cog = lv_label_create(cog_hit);
-    lv_label_set_text(cog, LV_SYMBOL_SETTINGS);
-    lv_obj_set_style_text_font(cog, FONT_BIG, LV_PART_MAIN);
-    lv_obj_set_style_text_color(cog, lv_color_hex(C_COG), LV_PART_MAIN);
-    lv_obj_center(cog);
+    /* The bottom corners are the two things you do with a dictation once it has
+     * landed: Undo it (backspace the whole sentence away) on the left, Send it
+     * (strike the configured chord -- Enter, or a modifier + Enter) on the
+     * right, where the affirmative action of a dialog sits. Both start dimmed
+     * and inert; the tick lights them the moment a transcript finishes typing,
+     * and dims them again once it is acted on. */
+    s_undo_hit = build_action(LV_ALIGN_BOTTOM_LEFT, EDGE, -EDGE, LV_SYMBOL_BACKSPACE, "Undo",
+                              C_MSG, on_undo);
+    s_send_hit = build_action(LV_ALIGN_BOTTOM_RIGHT, -EDGE, -EDGE, LV_SYMBOL_NEW_LINE, "Send",
+                              C_ON, on_send);
+    lv_obj_set_style_opa(s_send_hit, LV_OPA_30, LV_PART_MAIN);
+    lv_obj_set_style_opa(s_undo_hit, LV_OPA_30, LV_PART_MAIN);
 
     /* ---- transient status, and the error badge ----
      * Status ("Transcribing...", "Typing...") sits on the left, vertically

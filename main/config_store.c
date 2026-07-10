@@ -13,6 +13,7 @@ static const char *TAG = "config";
 #define K_SSID "ssid"
 #define K_PASS "pass"
 #define K_KEY  "apikey"
+#define K_SENDKEY "sendkey"
 #define K_STT_URL "stt_url"
 #define K_STT_MODEL "stt_model"
 #define K_STT_LANG "stt_lang"
@@ -56,6 +57,15 @@ esp_err_t config_load(app_config_t *cfg)
         ESP_RETURN_ON_ERROR(get_str(h, K_STT_URL, cfg->stt_url, sizeof(cfg->stt_url)), TAG, "stt url");
         ESP_RETURN_ON_ERROR(get_str(h, K_STT_MODEL, cfg->stt_model, sizeof(cfg->stt_model)), TAG, "stt model");
         ESP_RETURN_ON_ERROR(get_str(h, K_STT_LANG, cfg->stt_language, sizeof(cfg->stt_language)), TAG, "stt language");
+
+        /* Absent on a device provisioned before Send existed: fall back to a
+         * bare Enter, and ignore a corrupt value the same way. */
+        uint8_t sk = SEND_KEY_ENTER;
+        if (nvs_get_u8(h, K_SENDKEY, &sk) != ESP_OK || sk >= SEND_KEY_COUNT) {
+            sk = SEND_KEY_ENTER;
+        }
+        cfg->send_key = (send_key_t)sk;
+
         nvs_close(h);
     }
 
@@ -91,6 +101,7 @@ esp_err_t config_save(const app_config_t *cfg)
     if (err == ESP_OK) err = nvs_set_str(h, K_STT_URL, cfg->stt_url);
     if (err == ESP_OK) err = nvs_set_str(h, K_STT_MODEL, cfg->stt_model);
     if (err == ESP_OK) err = nvs_set_str(h, K_STT_LANG, cfg->stt_language);
+    if (err == ESP_OK) err = nvs_set_u8(h, K_SENDKEY, (uint8_t)cfg->send_key);
     if (err == ESP_OK) err = nvs_commit(h);
 
     nvs_close(h);

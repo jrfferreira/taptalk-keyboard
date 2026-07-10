@@ -72,7 +72,8 @@ it raises its own Wi-Fi network and shows a QR code.
    model, and (if required) API key.
 3. The device saves the settings and restarts.
 
-Tap the **cog** on the main screen to change them later, or to erase them.
+Tap the **Wi-Fi icon** (top-right of the main screen) to reopen this page later,
+to change your details, or to erase them.
 
 > [!WARNING]
 > The endpoint and API key are stored **unencrypted**. Sixty seconds with the
