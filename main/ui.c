@@ -882,6 +882,33 @@ void ui_show_setup(const prov_info_t *info, bool can_exit)
     ESP_LOGI(TAG, "setup screen shown");
 }
 
+/* Leave the setup screen for the main UI without a reboot. The state machine
+ * calls this once credentials are saved and the portal is torn down; the radio
+ * switches from AP to STA in place (see provisioning_stop / net_wifi). */
+void ui_show_main(void)
+{
+    if (!bsp_display_lock(2000)) {
+        ESP_LOGE(TAG, "could not lock display for main screen");
+        return;
+    }
+    lv_screen_load(s_main);
+    if (s_setup != NULL) {
+        lv_obj_delete(s_setup); /* reclaim its widgets; re-entry rebuilds it */
+        s_setup = NULL;
+    }
+    bsp_display_unlock();
+
+    /* ui_tick froze the screen-power fade while ST_PROVISIONING; bring the panel
+     * back to full and re-arm the idle clock so it fades from now, not from
+     * whenever setup opened. */
+    s_bright_cur = s_bright_tgt = 100;
+    s_asleep = false;
+    s_last_touch_us = esp_timer_get_time();
+    bsp_display_brightness_set(100);
+
+    ESP_LOGI(TAG, "main screen restored after setup");
+}
+
 esp_err_t ui_init(void)
 {
     s_lock = xSemaphoreCreateMutex();

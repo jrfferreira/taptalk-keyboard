@@ -34,6 +34,12 @@ static const char *TAG = "prov";
 
 static httpd_handle_t s_httpd;
 
+/* Portal lifecycle, shared between provisioning_start and provisioning_stop so
+ * the AP->STA switch can happen in place (no reboot -- see provisioning_stop). */
+static bool          s_started;    /* the portal is up */
+static esp_netif_t  *s_ap_netif;   /* the SoftAP netif, destroyed on stop */
+static volatile bool s_dns_stop;   /* asks the dns task to close and exit */
+
 /* ------------------------------------------------------------------ page */
 
 /* The SSID stays a real <input>, not a <select>: password managers look for a
@@ -191,8 +197,17 @@ static const char PAGE_SAVED[] =
     "<title>Saved</title>"
     "<style>body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:24px;background:#101418;"
     "color:#e8e8e8}</style>"
-    "<h1>Saved</h1><p>The device is restarting and will join your network. "
+    "<h1>Saved</h1><p>The device is joining your network. "
     "This access point is going away.</p>";
+
+static const char PAGE_ERASED[] =
+    "<!doctype html><meta charset=utf-8>"
+    "<meta name=viewport content='width=device-width,initial-scale=1'>"
+    "<title>Erased</title>"
+    "<style>body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:24px;background:#101418;"
+    "color:#e8e8e8}</style>"
+    "<h1>Erased</h1><p>The stored Wi-Fi and API credentials are gone. This "
+    "access point stays up so you can set the device up again.</p>";
 
 /* ------------------------------------------------------------------ scan */
 
@@ -524,9 +539,11 @@ static esp_err_t post_save(httpd_req_t *req)
 static esp_err_t post_erase(httpd_req_t *req)
 {
     config_erase();
-    send_html(req, PAGE_SAVED, sizeof(PAGE_SAVED) - 1);
-    vTaskDelay(pdMS_TO_TICKS(500));
-    app_sm_post(EV_PROVISIONED); /* reboots; comes back unprovisioned */
+    send_html(req, PAGE_ERASED, sizeof(PAGE_ERASED) - 1);
+    /* Stay in setup: an erased device is unprovisioned, which is exactly what
+     * the portal is for. Posting EV_PROVISIONED here would try to associate
+     * with the credentials we just wiped and fall into the error state. The AP
+     * stays up for reconfiguration; the next boot comes up unprovisioned. */
     return ESP_OK;
 }
 
@@ -594,14 +611,25 @@ static void dns_task(void *arg)
         return;
     }
 
+    /* A 1 s receive timeout so recvfrom returns periodically and the loop can
+     * notice the stop signal. Without it the task would block forever and
+     * provisioning_stop could not retire it when setup returns to STA. */
+    const struct timeval rcv_to = {.tv_sec = 1, .tv_usec = 0};
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &rcv_to, sizeof(rcv_to));
+
     static const uint8_t ap_ip[4] = {192, 168, 4, 1};
     uint8_t buf[256];
     for (;;) {
+        if (s_dns_stop) {
+            close(sock);
+            vTaskDelete(NULL);
+            return;
+        }
         struct sockaddr_in from;
         socklen_t from_len = sizeof(from);
         const int n = recvfrom(sock, buf, sizeof(buf), 0, (struct sockaddr *)&from, &from_len);
         if (n <= 0) {
-            continue;
+            continue; /* timeout (re-check the stop flag) or a spurious wakeup */
         }
         const size_t reply = dns_build_reply(buf, (size_t)n, sizeof(buf), ap_ip);
         if (reply > 0) {
@@ -634,8 +662,8 @@ esp_err_t provisioning_start(prov_info_t *info)
     /* ACT_PROV_START can fire more than once: the user taps Setup from the
      * idle screen, or from the error screen after a wrong password. Creating
      * the AP netif twice, re-binding the DNS socket, or starting an already
-     * running HTTP server would each fail in its own way. */
-    static bool s_started;
+     * running HTTP server would each fail in its own way. (s_started lives at
+     * file scope now, so provisioning_stop can clear it.) */
     static prov_info_t s_info;
     if (s_started) {
         *info = s_info;
@@ -648,8 +676,12 @@ esp_err_t provisioning_start(prov_info_t *info)
     /* We may be associated as a station already. Stop the radio before
      * switching modes; a running STA holds the netif we are about to replace. */
     esp_wifi_stop();
+    /* Forget any prior STA run-state so the reconnect after save does a full
+     * start rather than trying to re-associate on a stopped driver. */
+    net_wifi_sta_forget();
+    s_dns_stop = false; /* clear a stale stop from a previous portal session */
 
-    esp_netif_t *ap = esp_netif_create_default_wifi_ap();
+    s_ap_netif = esp_netif_create_default_wifi_ap();
     net_wifi_ensure_sta_netif();
 
     /* Hand the client a DNS server, namely us.
@@ -664,14 +696,14 @@ esp_err_t provisioning_start(prov_info_t *info)
 
     /* DHCP is not running yet, so the stop is a no-op; set_dns_info refuses
      * while it runs, hence the ordering. */
-    (void)esp_netif_dhcps_stop(ap);
-    ESP_RETURN_ON_ERROR(esp_netif_set_dns_info(ap, ESP_NETIF_DNS_MAIN, &dns), TAG, "dns info");
+    (void)esp_netif_dhcps_stop(s_ap_netif);
+    ESP_RETURN_ON_ERROR(esp_netif_set_dns_info(s_ap_netif, ESP_NETIF_DNS_MAIN, &dns), TAG, "dns info");
 
     uint8_t offer_dns = 2; /* dhcps_offer_option: OFFER_DNS */
-    ESP_RETURN_ON_ERROR(esp_netif_dhcps_option(ap, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER,
+    ESP_RETURN_ON_ERROR(esp_netif_dhcps_option(s_ap_netif, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER,
                                                &offer_dns, sizeof(offer_dns)),
                         TAG, "dhcps dns option");
-    (void)esp_netif_dhcps_start(ap);
+    (void)esp_netif_dhcps_start(s_ap_netif);
 
     wifi_config_t wc = {0};
     /* wc.ap.ssid is 32 bytes with no room for a terminator, so copy by length
@@ -712,4 +744,36 @@ esp_err_t provisioning_start(prov_info_t *info)
      * reaches a serial console. The API key is never logged. */
     ESP_LOGI(TAG, "setup AP up: ssid=%s pass=%s url=%s", info->ssid, info->pass, info->url);
     return ESP_OK;
+}
+
+void provisioning_stop(void)
+{
+    if (!s_started) {
+        return;
+    }
+
+    /* Tear the portal down so the radio can return to plain STA in place. We do
+     * this instead of rebooting because esp_restart() powers this AXP2101 board
+     * off (a software reset drops the rails) rather than restarting it. Order:
+     * stop serving, retire the DNS task, stop the radio, then drop the AP netif.
+     * net_wifi_sta_connect() runs next and does a clean STA start. */
+    if (s_httpd != NULL) {
+        httpd_stop(s_httpd);
+        s_httpd = NULL;
+    }
+
+    /* Ask the DNS task to exit and give it more than its 1 s recv timeout to
+     * close the socket, so its port is free if setup is reopened later. */
+    s_dns_stop = true;
+    vTaskDelay(pdMS_TO_TICKS(1200));
+
+    esp_wifi_stop();
+
+    if (s_ap_netif != NULL) {
+        esp_netif_destroy_default_wifi(s_ap_netif);
+        s_ap_netif = NULL;
+    }
+
+    s_started = false;
+    ESP_LOGI(TAG, "setup portal down; returning to station mode");
 }

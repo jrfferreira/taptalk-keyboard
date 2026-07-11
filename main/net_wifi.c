@@ -106,6 +106,18 @@ void net_wifi_ensure_sta_netif(void)
     }
 }
 
+/* Forget that the STA was ever brought up, so the next net_wifi_sta_connect()
+ * does a full esp_wifi_start() -- which fires STA_START and associates -- rather
+ * than a bare re-associate. Provisioning calls this when it stops the radio to
+ * raise its AP; without it, a save-and-reconnect after an earlier successful
+ * connect would call esp_wifi_connect() on a stopped driver and never join. The
+ * STA netif itself is kept (s_sta_netif), so only the run-state flags reset. */
+void net_wifi_sta_forget(void)
+{
+    s_sta_started  = false;
+    s_want_connect = false;
+}
+
 /* esp_wifi_set_max_tx_power requires the driver to be started, so every caller
  * invokes this right after its esp_wifi_start(). Never fatal: a board that
  * refuses the cap still runs, just closer to the brownout. */

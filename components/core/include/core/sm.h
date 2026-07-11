@@ -83,7 +83,7 @@ enum {
     ACT_SHOW_ERROR     = 1u << 11,
     ACT_HINT_NOT_READY = 1u << 12,
     ACT_PROV_START     = 1u << 13,
-    ACT_REBOOT         = 1u << 14,
+    ACT_PROV_STOP      = 1u << 14, /* tear the setup portal down and return to STA */
     ACT_HINT_QUIET     = 1u << 15, /* clip dropped: tell the user why */
     ACT_SEND_KEY       = 1u << 16, /* strike the configured Send chord */
     ACT_UNDO           = 1u << 17, /* backspace the last dictation away */

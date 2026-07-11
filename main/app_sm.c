@@ -8,7 +8,6 @@
 #include "stt_client.h"
 #include "config_store.h"
 #include "esp_log.h"
-#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -104,6 +103,17 @@ static void run_actions(uint32_t actions)
             ui_set_error("Setup AP failed");
         }
     }
+    if (actions & ACT_PROV_STOP) {
+        /* Give the "Saved" page a moment to reach the phone before the AP drops,
+         * then tear the portal down and adopt the just-saved credentials. Runs
+         * before ACT_WIFI_START below, which associates using this config. No
+         * reboot: this board powers off on esp_restart() rather than restarting,
+         * so the AP->STA switch happens in place. */
+        vTaskDelay(pdMS_TO_TICKS(400));
+        provisioning_stop();
+        (void)config_load(&s_cfg);
+        ui_show_main();
+    }
     if (actions & (ACT_WIFI_START | ACT_WIFI_RETRY)) {
         if (net_wifi_sta_connect(&s_cfg) != ESP_OK) {
             app_sm_post(EV_WIFI_DOWN);
@@ -175,11 +185,6 @@ static void run_actions(uint32_t actions)
         ui_set_error(!config_is_provisioned(&s_cfg) ? "Not configured - tap Setup"
                    : stt_error()[0] != '\0'      ? stt_error()
                                                  : "Error - tap Setup or wait");
-    }
-    if (actions & ACT_REBOOT) {
-        ESP_LOGI(TAG, "restarting to apply configuration");
-        vTaskDelay(pdMS_TO_TICKS(300));
-        esp_restart();
     }
 }
 

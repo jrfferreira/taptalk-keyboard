@@ -32,15 +32,16 @@ sm_out_t sm_step(app_state_t state, app_event_t event, const sm_guards_t *g)
         return ignore;
 
     case ST_PROVISIONING:
-        /* Credentials land in NVS, then we reboot. Switching the radio from
-         * AP back to STA in place is more moving parts than a restart is
-         * worth, and a restart also re-runs the whole boot path we just
-         * changed the inputs to. */
-        if (event == EV_PROVISIONED) return out(ST_PROVISIONING, ACT_REBOOT);
-        /* The Back button, shown only when we entered setup already provisioned.
-         * A reboot restores the STA the AP displaced -- the same reasoning as
-         * save, above. */
-        if (event == EV_SETUP_EXIT) return out(ST_PROVISIONING, ACT_REBOOT);
+        /* Credentials land in NVS, then we switch the radio from AP back to STA
+         * in place -- tear down the portal and associate. We do NOT reboot: on
+         * this AXP2101 board esp_restart() cuts the rails and the device powers
+         * off (needs a manual power-on) instead of restarting. ACT_PROV_STOP
+         * stops the portal and reloads the just-saved config; ACT_WIFI_START
+         * connects with it. */
+        if (event == EV_PROVISIONED) return out(ST_WIFI_CONNECTING, ACT_PROV_STOP | ACT_WIFI_START);
+        /* The Back button, shown only when we entered setup already provisioned:
+         * same path, restoring the STA the AP displaced. */
+        if (event == EV_SETUP_EXIT) return out(ST_WIFI_CONNECTING, ACT_PROV_STOP | ACT_WIFI_START);
         return ignore;
 
     case ST_WIFI_CONNECTING:
