@@ -26,6 +26,14 @@ static const char *TAG = "ui";
 #define FONT_BIG LV_FONT_DEFAULT
 #endif
 
+/* A step up from FONT_BIG, for the Send/Undo glyphs which the user asked to be
+ * larger. Falls back to FONT_BIG if the 36 px face is not compiled in. */
+#if LV_FONT_MONTSERRAT_36
+#define FONT_ACTION &lv_font_montserrat_36
+#else
+#define FONT_ACTION FONT_BIG
+#endif
+
 /* Panel is 368x448. */
 #define BTN_D 228
 /* The cap ring: a thin progress arc circling the button while recording, one
@@ -49,6 +57,7 @@ static const char *TAG = "ui";
  * bottom when the room is quiet. A bar has to be taller than this to show. */
 #define SPEC_SINK  14
 #define ICON_HIT 72   /* transparent touch target; the glyph is smaller than the tap */
+#define ACTION_HIT 96 /* Send/Undo: a larger target and glyph than the corner icons */
 #define EDGE 16       /* inset from the rounded corners of the panel */
 
 /* AMOLED: a true-black top costs no power and gives the gradient somewhere to
@@ -576,7 +585,7 @@ static lv_obj_t *build_action(lv_align_t align, int dx, int dy, const char *icon
 {
     lv_obj_t *hit = lv_obj_create(s_main);
     lv_obj_remove_style_all(hit);
-    lv_obj_set_size(hit, ICON_HIT, ICON_HIT);
+    lv_obj_set_size(hit, ACTION_HIT, ACTION_HIT);
     lv_obj_align(hit, align, dx, dy);
     lv_obj_remove_flag(hit, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(hit, cb, LV_EVENT_CLICKED, NULL);
@@ -584,13 +593,13 @@ static lv_obj_t *build_action(lv_align_t align, int dx, int dy, const char *icon
     lv_obj_t *cap = lv_label_create(hit);
     lv_label_set_text(cap, caption);
     lv_obj_set_style_text_color(cap, lv_color_hex(color), LV_PART_MAIN);
-    lv_obj_align(cap, LV_ALIGN_CENTER, 0, -12);
+    lv_obj_align(cap, LV_ALIGN_CENTER, 0, -20);
 
     lv_obj_t *ico = lv_label_create(hit);
     lv_label_set_text(ico, icon);
-    lv_obj_set_style_text_font(ico, FONT_BIG, LV_PART_MAIN);
+    lv_obj_set_style_text_font(ico, FONT_ACTION, LV_PART_MAIN);
     lv_obj_set_style_text_color(ico, lv_color_hex(color), LV_PART_MAIN);
-    lv_obj_align(ico, LV_ALIGN_CENTER, 0, 12);
+    lv_obj_align(ico, LV_ALIGN_CENTER, 0, 14);
 
     return hit;
 }
