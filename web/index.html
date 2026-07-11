@@ -128,6 +128,32 @@
     48%, 100% { opacity: 0 }
   }
 
+  /* The cap ring, mirroring the firmware: one full turn = the two-minute clip
+     budget, filling clockwise from 12 o'clock while the button is red, amber
+     for the final stretch — the finish-your-sentence warning — right before
+     the clip uploads itself. It shares the red disc's opacity envelope
+     (the `recording` keyframes) so the two can never drift apart. Time is
+     compressed like everything else on this clock: the fill runs the whole
+     recording window so the feature is visible, not real-time. 722.6 is the
+     r=115 circumference; offset 722.6 = empty, 0 = a closed ring. */
+  .ring { opacity: 0; animation: recording var(--cycle) ease-in-out infinite; }
+  .ring .arc {
+    stroke: #fff;
+    stroke-dasharray: 722.6;
+    stroke-dashoffset: 722.6;
+    animation: ringfill var(--cycle) linear infinite;
+  }
+  @keyframes ringfill {
+    0%, 9%      { stroke-dashoffset: 722.6; stroke: #fff }
+    36%         { stroke: #fff }
+    39%         { stroke: var(--amber) }
+    43%         { stroke-dashoffset: 0 }
+    48%         { stroke-dashoffset: 0; stroke: var(--amber) }
+    /* Rewind while the ring is already invisible, so it never unwinds
+       on screen. */
+    48.5%, 100% { stroke-dashoffset: 722.6; stroke: #fff }
+  }
+
   /* The spectrum analyser rides the master cycle: the bars sit as flat stubs
      while idle and only dance inside the recording window (9-43%, the stretch
      where the button is red) — the mic is what feeds them. Five keyframe
@@ -195,7 +221,7 @@
   @keyframes caret { 0%, 100% { border-color: var(--mint) } 50% { border-color: transparent } }
 
   @media (prefers-reduced-motion: reduce) {
-    .pulse, .rec, .sb, .typed, .eyebrow .dot { animation: none; }
+    .pulse, .rec, .sb, .typed, .eyebrow .dot, .ring, .ring .arc { animation: none; }
     .pulse { opacity: .25 }
     .rec { opacity: 0 }
     /* Bars hold a mid height rather than collapsing to the floor. */
@@ -385,7 +411,7 @@
 
 <div class="stage">
   <!-- Stylised 368×448 AMOLED, drawn to match the real UI. -->
-  <svg class="device" viewBox="0 0 448 368" role="img" aria-label="The device in landscape: a large hold-to-talk button in the middle, a USB icon top-left, a Wi-Fi icon top-right that doubles as the door to setup, an amber Undo action bottom-left, a green Send action bottom-right, and a live spectrum analyser rising from the bottom edge behind the button">
+  <svg class="device" viewBox="0 0 448 368" role="img" aria-label="The device in landscape: a large hold-to-talk button in the middle, a USB icon top-left, a Wi-Fi icon top-right that doubles as the door to setup, an amber Undo action bottom-left, a green Send action bottom-right, a live spectrum analyser rising from the bottom edge behind the button, and — while recording — a thin progress ring circling the button, filling toward the two-minute clip limit">
       <defs>
         <linearGradient id="bezel" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stop-color="#2b3540"/><stop offset="1" stop-color="#141a20"/>
@@ -473,6 +499,13 @@
       <circle class="pulse" cx="224" cy="176" r="98" fill="none" stroke="#3ddc97" stroke-width="2"/>
       <circle cx="224" cy="176" r="98" fill="url(#btn)"/>
       <circle class="rec" cx="224" cy="176" r="98" fill="#e5483a"/>
+      <!-- the cap ring circling the disc, over a faint full-circle track so
+           the budget itself is visible. Rotated -90° because an SVG circle's
+           dash starts at 3 o'clock; the firmware's ring starts at the top. -->
+      <g class="ring" fill="none" stroke-width="7" stroke-linecap="round" transform="rotate(-90 224 176)">
+        <circle cx="224" cy="176" r="115" stroke="#fff" stroke-opacity=".18"/>
+        <circle class="arc" cx="224" cy="176" r="115"/>
+      </g>
       <!-- microphone glyph -->
       <g transform="translate(224 176)" fill="#04150e">
         <rect x="-15" y="-44" width="30" height="56" rx="15"/>
