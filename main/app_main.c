@@ -149,15 +149,21 @@ static void display_start(void)
      *
      * The port keeps the esp_lcd_touch handle as the first member of the indev's
      * driver-data struct, which is how we reach it without a public accessor.
-     * For a 270 deg rotation the transform is swap-xy plus one mirror; if taps
-     * land mirrored, flip mirror_x <-> mirror_y. */
+     *
+     * esp_lcd_touch applies mirror in raw panel space, THEN swaps, so with
+     * swap on, screen-X comes from the panel-Y axis. mirror_y was flipping
+     * screen-X: taps landed horizontally mirrored -- Send (bottom-right) fired
+     * Undo (bottom-left), the Wi-Fi icon (top-right) hit the dead top-left
+     * corner. This board needs swap-xy and NO mirror. All three flags are set
+     * explicitly so the result does not depend on the driver's defaults. */
     lv_indev_t *indev = bsp_display_get_input_dev();
     if (indev != NULL) {
         void *ctx = lv_indev_get_driver_data(indev);
         esp_lcd_touch_handle_t tp = ctx ? *(esp_lcd_touch_handle_t *)ctx : NULL;
         if (tp != NULL) {
             esp_lcd_touch_set_swap_xy(tp, true);
-            esp_lcd_touch_set_mirror_y(tp, true);
+            esp_lcd_touch_set_mirror_x(tp, false);
+            esp_lcd_touch_set_mirror_y(tp, false);
             ESP_LOGI(TAG, "touch rotated to match 270 deg display");
         } else {
             ESP_LOGE(TAG, "could not reach touch handle; touch will be misaligned");
