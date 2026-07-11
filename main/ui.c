@@ -28,6 +28,14 @@ static const char *TAG = "ui";
 
 /* Panel is 368x448. */
 #define BTN_D 228
+/* The cap ring: a thin progress arc circling the button while recording, one
+ * full turn = AUDIO_MAX_SECONDS. Sized to sit in the halo's glow band (the
+ * halo image is 320 px, the disc 228), just clear of the disc's edge. */
+#define RING_D 268
+#define RING_W 8
+/* The last stretch before the cap turns the ring amber: enough warning to
+ * finish a sentence before the clip uploads itself. */
+#define RING_WARN_S 15
 /* The spectrum analyser: full-width bars rising from the bottom edge, low
  * opacity, behind the button -- the sound "coming up from the floor" of the
  * screen. One bar per FFT band. Sized for the 448 px landscape width. */
@@ -83,7 +91,7 @@ static ui_model_t s_model;
 static SemaphoreHandle_t s_lock;
 
 static lv_obj_t *s_main, *s_setup;
-static lv_obj_t *s_btn, *s_mic, *s_timer, *s_spinner, *s_status, *s_halo;
+static lv_obj_t *s_btn, *s_mic, *s_timer, *s_spinner, *s_status, *s_halo, *s_ring;
 static lv_obj_t *s_ico_usb, *s_ico_wifi, *s_badge, *s_badge_hit;
 static lv_obj_t *s_send_hit, *s_undo_hit; /* bottom-corner Send / Undo actions */
 static lv_obj_t *s_sheet, *s_sheet_text;
@@ -226,6 +234,8 @@ static void ui_tick(lv_timer_t *timer)
     static int last_rec = -1; /* neither true nor false, so the first tick paints */
     static int last_wifi = -1, last_usb = -1;
     static uint32_t last_timer_tenths = UINT32_MAX;
+    static uint32_t last_ring_deg;
+    static bool last_ring_warn;
     static char last_msg[sizeof(m.msg)] = {1};
 
     const bool rec = (m.state == ST_RECORDING);
@@ -236,6 +246,17 @@ static void ui_tick(lv_timer_t *timer)
         last_rec = rec;
         /* Swap the whole depth-shaded disc: green idle, red recording. */
         lv_obj_set_style_bg_image_src(s_btn, rec ? &btn_rec : &btn_idle, LV_PART_MAIN);
+        /* The cap ring only exists while recording. Reset it on the way in --
+         * the previous clip may have left it part-full or amber. */
+        if (rec) {
+            last_ring_deg  = 0;
+            last_ring_warn = false;
+            lv_arc_set_value(s_ring, 0);
+            lv_obj_set_style_arc_color(s_ring, lv_color_white(), LV_PART_INDICATOR);
+            lv_obj_remove_flag(s_ring, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_ring, LV_OBJ_FLAG_HIDDEN);
+        }
     }
 
     /* The centre of the button shows exactly one thing at a time: the mic says
@@ -289,6 +310,28 @@ static void ui_tick(lv_timer_t *timer)
             last_timer_tenths = tenths;
             lv_label_set_text_fmt(s_timer, "%u.%us", (unsigned)(tenths / 10),
                                   (unsigned)(tenths % 10));
+        }
+
+        /* The cap ring fills with elapsed / AUDIO_MAX_SECONDS. Whole degrees
+         * only: 360 over two minutes is one small arc redraw every ~333 ms,
+         * not an invalidation per tick. For a typical dictation it stays
+         * nearly empty, which is the honest reading -- there is plenty of
+         * room. When it does close in, the last RING_WARN_S turn it amber;
+         * at the top the clip uploads itself (EV_REC_MAX) and the ring gives
+         * way to the spinner. */
+        uint32_t deg = m.clip_ms * 360u / (AUDIO_MAX_SECONDS * 1000u);
+        if (deg > 360) {
+            deg = 360;
+        }
+        if (deg != last_ring_deg) {
+            last_ring_deg = deg;
+            lv_arc_set_value(s_ring, (int32_t)deg);
+        }
+        const bool warn = m.clip_ms >= (AUDIO_MAX_SECONDS - RING_WARN_S) * 1000u;
+        if (warn != last_ring_warn) {
+            last_ring_warn = warn;
+            lv_obj_set_style_arc_color(s_ring, warn ? lv_color_hex(C_MSG) : lv_color_white(),
+                                       LV_PART_INDICATOR);
         }
     }
 
@@ -643,6 +686,32 @@ static void build_main(void)
     lv_obj_set_style_arc_rounded(s_spinner, true, LV_PART_INDICATOR);
     lv_obj_remove_flag(s_spinner, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(s_spinner, LV_OBJ_FLAG_HIDDEN);
+
+    /* The cap ring: how much of the two-minute clip buffer this recording has
+     * used. Zero at 12 o'clock, filling clockwise, one full turn = the cap.
+     * It circles the outside of the disc, in the halo's glow, and is white
+     * like the timer and spinner -- the "something is happening" colour. The
+     * faint full-circle track is deliberate: it shows there IS a budget, not
+     * just an arc of unknown reach. Hidden except while recording. */
+    s_ring = lv_arc_create(s_main);
+    lv_obj_set_size(s_ring, RING_D, RING_D);
+    lv_obj_align(s_ring, LV_ALIGN_CENTER, 0, -8); /* concentric with the button */
+    lv_arc_set_rotation(s_ring, 270);             /* zero at the top */
+    lv_arc_set_bg_angles(s_ring, 0, 360);
+    lv_arc_set_range(s_ring, 0, 360);             /* the tick works in degrees */
+    lv_arc_set_value(s_ring, 0);
+    /* A progress readout, not a slider: no knob, and no touch -- a press on
+     * the ring must fall through to the button underneath it. */
+    lv_obj_remove_style(s_ring, NULL, LV_PART_KNOB);
+    lv_obj_remove_flag(s_ring, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_arc_width(s_ring, RING_W, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(s_ring, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(s_ring, LV_OPA_20, LV_PART_MAIN); /* faint track */
+    lv_obj_set_style_arc_width(s_ring, RING_W, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(s_ring, lv_color_white(), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_opa(s_ring, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(s_ring, true, LV_PART_INDICATOR);
+    lv_obj_add_flag(s_ring, LV_OBJ_FLAG_HIDDEN);
 
     /* ---- four corners, Apple Watch style ----
      * The panel's corners are rounded, so these are inset diagonally rather
