@@ -447,9 +447,21 @@ static void sheet_close(lv_event_t *e)
 /* The beep goes out from the touch event, not from the state machine, so the
  * confirmation is bound to the finger rather than to whatever the machine
  * decides to do about it. A press that is refused still clicks. */
+/* TEMP touch calibration: log where a tap that reached a control actually
+ * landed, so the swap/mirror transform can be checked against the target. */
+static void log_touch(const char *what)
+{
+    lv_indev_t *iv = lv_indev_active();
+    if (iv == NULL) return;
+    lv_point_t p;
+    lv_indev_get_point(iv, &p);
+    ESP_LOGI(TAG, "CAL: %s at (%d,%d)", what, (int)p.x, (int)p.y);
+}
+
 static void on_press(lv_event_t *e)
 {
     (void)e;
+    log_touch("button");
     if (woke_from_touch()) {
         s_swallow_release = true; /* the matching release must not act either */
         return;                   /* a tap on a sleeping screen only wakes it */
@@ -483,7 +495,7 @@ static void on_press_lost(lv_event_t *e)
     beeper_play(BEEP_RELEASE);
     app_sm_post(EV_PRESS_LOST);
 }
-static void on_setup(lv_event_t *e) { (void)e; if (woke_from_touch()) return; app_sm_post(EV_ENTER_SETUP); }
+static void on_setup(lv_event_t *e) { (void)e; log_touch("wifi/setup"); if (woke_from_touch()) return; app_sm_post(EV_ENTER_SETUP); }
 static void on_setup_exit(lv_event_t *e) { (void)e; if (woke_from_touch()) return; app_sm_post(EV_SETUP_EXIT); }
 
 /* Diagnostic: logs where a tap landed in LOGICAL (post-rotation) coordinates,
@@ -493,6 +505,12 @@ static void on_setup_exit(lv_event_t *e) { (void)e; if (woke_from_touch()) retur
 static void screen_tap_log(lv_event_t *e)
 {
     (void)e;
+    /* A tap that hits no control must still wake a sleeping screen. The button
+     * and corner handlers call woke_from_touch(), but a tap on empty background
+     * only reaches here -- without this, a miss on a dark screen logged but left
+     * it dark, which looked like a dead device. */
+    (void)woke_from_touch();
+
     lv_indev_t *indev = lv_indev_active();
     if (indev == NULL) {
         return;
@@ -509,8 +527,8 @@ static void screen_tap_log(lv_event_t *e)
  * is anything to act on. */
 /* Like the button, a tap on a sleeping screen only wakes it -- it must not fire
  * Send or Undo. */
-static void on_send(lv_event_t *e) { (void)e; if (woke_from_touch()) return; beeper_play(BEEP_PRESS); app_sm_post(EV_SEND); }
-static void on_undo(lv_event_t *e) { (void)e; if (woke_from_touch()) return; beeper_play(BEEP_PRESS); app_sm_post(EV_UNDO); }
+static void on_send(lv_event_t *e) { (void)e; log_touch("send"); if (woke_from_touch()) return; beeper_play(BEEP_PRESS); app_sm_post(EV_SEND); }
+static void on_undo(lv_event_t *e) { (void)e; log_touch("undo"); if (woke_from_touch()) return; beeper_play(BEEP_PRESS); app_sm_post(EV_UNDO); }
 
 
 
@@ -738,10 +756,16 @@ static void build_main(void)
      * a 72 px transparent target makes tapping it open the portal, which is
      * where you go when the connection is the thing that is wrong. This is why
      * the bottom-right cog is gone -- setup lives here now. */
+    /* A wide top-right strip, not a 72 px corner square: calibration showed touch
+     * X tops out well short of the 448 px right edge, so a corner-tight box was
+     * unreachable and setup never opened. This spans most of the top-right and
+     * sits just above the record button (which starts at y=54), so it catches
+     * the tap without stealing the button's presses. The glyph still renders in
+     * the corner. */
     lv_obj_t *wifi_hit = lv_obj_create(s_main);
     lv_obj_remove_style_all(wifi_hit);
-    lv_obj_set_size(wifi_hit, ICON_HIT, ICON_HIT);
-    lv_obj_align(wifi_hit, LV_ALIGN_TOP_RIGHT, -EDGE, EDGE);
+    lv_obj_set_size(wifi_hit, 184, 52);
+    lv_obj_align(wifi_hit, LV_ALIGN_TOP_RIGHT, 0, 0);
     lv_obj_remove_flag(wifi_hit, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(wifi_hit, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(wifi_hit, on_setup, LV_EVENT_CLICKED, NULL);
@@ -749,7 +773,7 @@ static void build_main(void)
     s_ico_wifi = lv_label_create(wifi_hit);
     lv_label_set_text(s_ico_wifi, LV_SYMBOL_WIFI);
     lv_obj_set_style_text_font(s_ico_wifi, FONT_BIG, LV_PART_MAIN);
-    lv_obj_center(s_ico_wifi);
+    lv_obj_align(s_ico_wifi, LV_ALIGN_RIGHT_MID, -EDGE, 0);
 
     /* The spectrum analyser: one bar per FFT band, spanning the full width and
      * anchored to the bottom edge so the bars rise from the floor of the screen.

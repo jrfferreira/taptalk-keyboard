@@ -120,6 +120,37 @@ static void wait_for_touch(void)
                   "to abort. The board will reboot.", TOUCH_I2C_ADDR);
 }
 
+/* This FT3168 panel under-reports its coordinate range: a full-surface drag
+ * measured raw X in 27..339 (nominal 0..368) and raw Y in 41..411 (nominal
+ * 0..448), so it never reaches the display edges and the corner controls -- Wi-Fi,
+ * Send, Undo -- were untappable. esp_lcd_touch calls this with the RAW panel
+ * coordinates before swap/mirror; stretch the measured reachable band to the
+ * full native range so the whole screen becomes reachable. Clamped to the panel
+ * bounds: out-of-band samples were landing as negative coordinates and getting
+ * dropped, which is what made the top edge dead. */
+#define TOUCH_RAW_X_MIN 27
+#define TOUCH_RAW_X_MAX 339
+#define TOUCH_RAW_Y_MIN 41
+#define TOUCH_RAW_Y_MAX 411
+static void touch_scale(esp_lcd_touch_handle_t tp, uint16_t *x, uint16_t *y,
+                        uint16_t *strength, uint8_t *point_num, uint8_t max_point_num)
+{
+    (void)tp;
+    (void)strength;
+    (void)max_point_num;
+    if (point_num == NULL) {
+        return;
+    }
+    for (uint8_t i = 0; i < *point_num; i++) {
+        int sx = ((int)x[i] - TOUCH_RAW_X_MIN) * (BSP_LCD_H_RES - 1) /
+                 (TOUCH_RAW_X_MAX - TOUCH_RAW_X_MIN);
+        int sy = ((int)y[i] - TOUCH_RAW_Y_MIN) * (BSP_LCD_V_RES - 1) /
+                 (TOUCH_RAW_Y_MAX - TOUCH_RAW_Y_MIN);
+        x[i] = (uint16_t)(sx < 0 ? 0 : (sx > BSP_LCD_H_RES - 1 ? BSP_LCD_H_RES - 1 : sx));
+        y[i] = (uint16_t)(sy < 0 ? 0 : (sy > BSP_LCD_V_RES - 1 ? BSP_LCD_V_RES - 1 : sy));
+    }
+}
+
 static void display_start(void)
 {
     bsp_display_cfg_t cfg = {
@@ -164,6 +195,10 @@ static void display_start(void)
             esp_lcd_touch_set_swap_xy(tp, true);
             esp_lcd_touch_set_mirror_x(tp, false);
             esp_lcd_touch_set_mirror_y(tp, false);
+            /* Stretch the panel's under-reported coordinate range to the full
+             * display, so the edges (and the controls that live there) are
+             * reachable. See touch_scale. */
+            tp->config.process_coordinates = touch_scale;
             ESP_LOGI(TAG, "touch rotated to match 270 deg display");
         } else {
             ESP_LOGE(TAG, "could not reach touch handle; touch will be misaligned");
