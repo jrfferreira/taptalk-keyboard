@@ -365,13 +365,15 @@ static void ui_tick(lv_timer_t *timer)
     }
 
     /* Send and Undo only mean anything on a dictation that has landed and not
-     * yet been acted on. Outside that window they are dimmed and drop their
-     * clickable flag, so a stray tap on the corner does nothing. */
+     * yet been acted on: they appear when a transcript finishes typing and
+     * vanish the moment it is sent, undone, or a new recording starts. Fully
+     * hidden (not just dimmed) outside that window, and non-clickable, so an
+     * empty corner is genuinely empty. */
     static int last_live = -1;
     const bool actions_live = (m.state == ST_IDLE_READY && m.pending);
     if ((int)actions_live != last_live) {
         last_live = actions_live;
-        const lv_opa_t opa = actions_live ? LV_OPA_COVER : LV_OPA_30;
+        const lv_opa_t opa = actions_live ? LV_OPA_COVER : LV_OPA_TRANSP;
         lv_obj_set_style_opa(s_send_hit, opa, LV_PART_MAIN);
         lv_obj_set_style_opa(s_undo_hit, opa, LV_PART_MAIN);
         if (actions_live) {
@@ -770,14 +772,14 @@ static void build_main(void)
      * landed: Undo it (backspace the whole sentence away) on the left, Send it
      * (strike the configured chord -- Enter, or a modifier + Enter) on the
      * right, where the affirmative action of a dialog sits. Both start dimmed
-     * and inert; the tick lights them the moment a transcript finishes typing,
-     * and dims them again once it is acted on. */
+     * and inert; the tick reveals them the moment a transcript finishes typing,
+     * and hides them again once it is acted on. */
     s_undo_hit = build_action(LV_ALIGN_BOTTOM_LEFT, EDGE, -EDGE, LV_SYMBOL_BACKSPACE, "Undo",
                               C_MSG, on_undo);
     s_send_hit = build_action(LV_ALIGN_BOTTOM_RIGHT, -EDGE, -EDGE, LV_SYMBOL_NEW_LINE, "Send",
                               C_ON, on_send);
-    lv_obj_set_style_opa(s_send_hit, LV_OPA_30, LV_PART_MAIN);
-    lv_obj_set_style_opa(s_undo_hit, LV_OPA_30, LV_PART_MAIN);
+    lv_obj_set_style_opa(s_send_hit, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_opa(s_undo_hit, LV_OPA_TRANSP, LV_PART_MAIN);
 
     /* ---- transient status, and the error badge ----
      * Status ("Transcribing...", "Typing...") sits along the bottom on the same
