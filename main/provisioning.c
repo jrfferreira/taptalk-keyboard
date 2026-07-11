@@ -9,6 +9,7 @@
 #include "core/formdec.h"
 #include "core/jsonesc.h"
 #include "core/keymap.h"
+#include "esp_app_desc.h"
 #include "esp_check.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -133,6 +134,9 @@ static const char PAGE_FORM[] =
     "<button type=submit class=danger>Erase stored credentials</button></form>"
     "<small>The API key and endpoint are stored unencrypted. Anyone with this board and a USB "
     "cable can read them. Erase them before lending the device.</small>"
+    /* Filled by the /config fetch below. Which commit built this firmware --
+     * handy when reporting a bug or confirming a flash. */
+    "<small id=fw style='color:#4b555f;margin-top:8px'></small>"
 
     "<script>"
     "var sel=document.getElementById('netsel'),ssid=document.getElementById('ssid'),"
@@ -166,6 +170,7 @@ static const char PAGE_FORM[] =
      * returns empty strings and the compiled-in defaults above stand. */
     "fetch('/config').then(function(r){return r.json();}).then(function(c){"
     "sc=c;"
+    "if(c.fw)document.getElementById('fw').textContent='Firmware '+c.fw;"
     "if(c.ssid)ssid.value=c.ssid;"
     "if(c.url)document.getElementById('url').value=c.url;"
     "if(c.model)document.getElementById('model').value=c.model;"
@@ -358,6 +363,7 @@ static esp_err_t get_config(httpd_req_t *req)
     (void)config_load(&s_stored); /* failure leaves empty fields: "nothing stored" */
 
     httpd_resp_sendstr_chunk(req, "{");
+    send_cfg_field(req, "fw", esp_app_get_description()->version); /* release+githash */
     send_cfg_field(req, "ssid", s_stored.wifi_ssid);
     send_cfg_field(req, "url", s_stored.stt_url);
     send_cfg_field(req, "model", s_stored.stt_model);
@@ -417,14 +423,18 @@ static bool valid_stt_url(const char *url)
 
 static esp_err_t post_save(httpd_req_t *req)
 {
-    char body[MAX_BODY];
+    /* static, not on the stack: 2300 bytes of body plus a ~700-byte config below
+     * overflowed the httpd task stack and reset the board on Save. The AP serves
+     * one client and httpd handles requests serially, so a single shared buffer
+     * is safe. */
+    static char body[MAX_BODY];
+    static app_config_t cfg;
     size_t len = 0;
     if (read_body(req, body, sizeof(body), &len) != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad body");
         return ESP_OK;
     }
 
-    app_config_t cfg;
     memset(&cfg, 0, sizeof(cfg));
 
     /* form_get refuses to truncate: an over-long value is an error, not a
@@ -528,6 +538,12 @@ static esp_err_t start_http_server(void)
     cfg.max_uri_handlers = 6;
     cfg.lru_purge_enable = true;
     cfg.uri_match_fn     = httpd_uri_match_wildcard;
+    /* The default 4 KB is not enough for post_save once the endpoint/model
+     * fields grew MAX_BODY to 2300 and app_config_t past 700 bytes: the handler
+     * frame overflowed the task stack and the board reset on Save (looked like a
+     * power-off). Give it real headroom; the buffers are also moved off the
+     * stack (see post_save), but a comfortable stack is the belt to that brace. */
+    cfg.stack_size = 8192;
     /* The AP is ours alone; a short timeout keeps a stalled phone from
      * holding the single worker. */
     cfg.recv_wait_timeout = 5;
