@@ -26,6 +26,14 @@ static const char *TAG = "ui";
 #define FONT_BIG LV_FONT_DEFAULT
 #endif
 
+/* A step up from FONT_BIG, for the Send/Undo glyphs which the user asked to be
+ * larger. Falls back to FONT_BIG if the 36 px face is not compiled in. */
+#if LV_FONT_MONTSERRAT_36
+#define FONT_ACTION &lv_font_montserrat_36
+#else
+#define FONT_ACTION FONT_BIG
+#endif
+
 /* Panel is 368x448. */
 #define BTN_D 228
 /* The cap ring: a thin progress arc circling the button while recording, one
@@ -49,6 +57,7 @@ static const char *TAG = "ui";
  * bottom when the room is quiet. A bar has to be taller than this to show. */
 #define SPEC_SINK  14
 #define ICON_HIT 72   /* transparent touch target; the glyph is smaller than the tap */
+#define ACTION_HIT 96 /* Send/Undo: a larger target and glyph than the corner icons */
 #define EDGE 16       /* inset from the rounded corners of the panel */
 
 /* AMOLED: a true-black top costs no power and gives the gradient somewhere to
@@ -365,13 +374,15 @@ static void ui_tick(lv_timer_t *timer)
     }
 
     /* Send and Undo only mean anything on a dictation that has landed and not
-     * yet been acted on. Outside that window they are dimmed and drop their
-     * clickable flag, so a stray tap on the corner does nothing. */
+     * yet been acted on: they appear when a transcript finishes typing and
+     * vanish the moment it is sent, undone, or a new recording starts. Fully
+     * hidden (not just dimmed) outside that window, and non-clickable, so an
+     * empty corner is genuinely empty. */
     static int last_live = -1;
     const bool actions_live = (m.state == ST_IDLE_READY && m.pending);
     if ((int)actions_live != last_live) {
         last_live = actions_live;
-        const lv_opa_t opa = actions_live ? LV_OPA_COVER : LV_OPA_30;
+        const lv_opa_t opa = actions_live ? LV_OPA_COVER : LV_OPA_TRANSP;
         lv_obj_set_style_opa(s_send_hit, opa, LV_PART_MAIN);
         lv_obj_set_style_opa(s_undo_hit, opa, LV_PART_MAIN);
         if (actions_live) {
@@ -436,9 +447,21 @@ static void sheet_close(lv_event_t *e)
 /* The beep goes out from the touch event, not from the state machine, so the
  * confirmation is bound to the finger rather than to whatever the machine
  * decides to do about it. A press that is refused still clicks. */
+/* TEMP touch calibration: log where a tap that reached a control actually
+ * landed, so the swap/mirror transform can be checked against the target. */
+static void log_touch(const char *what)
+{
+    lv_indev_t *iv = lv_indev_active();
+    if (iv == NULL) return;
+    lv_point_t p;
+    lv_indev_get_point(iv, &p);
+    ESP_LOGI(TAG, "CAL: %s at (%d,%d)", what, (int)p.x, (int)p.y);
+}
+
 static void on_press(lv_event_t *e)
 {
     (void)e;
+    log_touch("button");
     if (woke_from_touch()) {
         s_swallow_release = true; /* the matching release must not act either */
         return;                   /* a tap on a sleeping screen only wakes it */
@@ -472,7 +495,7 @@ static void on_press_lost(lv_event_t *e)
     beeper_play(BEEP_RELEASE);
     app_sm_post(EV_PRESS_LOST);
 }
-static void on_setup(lv_event_t *e) { (void)e; if (woke_from_touch()) return; app_sm_post(EV_ENTER_SETUP); }
+static void on_setup(lv_event_t *e) { (void)e; log_touch("wifi/setup"); if (woke_from_touch()) return; app_sm_post(EV_ENTER_SETUP); }
 static void on_setup_exit(lv_event_t *e) { (void)e; if (woke_from_touch()) return; app_sm_post(EV_SETUP_EXIT); }
 
 /* Diagnostic: logs where a tap landed in LOGICAL (post-rotation) coordinates,
@@ -482,6 +505,12 @@ static void on_setup_exit(lv_event_t *e) { (void)e; if (woke_from_touch()) retur
 static void screen_tap_log(lv_event_t *e)
 {
     (void)e;
+    /* A tap that hits no control must still wake a sleeping screen. The button
+     * and corner handlers call woke_from_touch(), but a tap on empty background
+     * only reaches here -- without this, a miss on a dark screen logged but left
+     * it dark, which looked like a dead device. */
+    (void)woke_from_touch();
+
     lv_indev_t *indev = lv_indev_active();
     if (indev == NULL) {
         return;
@@ -498,8 +527,8 @@ static void screen_tap_log(lv_event_t *e)
  * is anything to act on. */
 /* Like the button, a tap on a sleeping screen only wakes it -- it must not fire
  * Send or Undo. */
-static void on_send(lv_event_t *e) { (void)e; if (woke_from_touch()) return; beeper_play(BEEP_PRESS); app_sm_post(EV_SEND); }
-static void on_undo(lv_event_t *e) { (void)e; if (woke_from_touch()) return; beeper_play(BEEP_PRESS); app_sm_post(EV_UNDO); }
+static void on_send(lv_event_t *e) { (void)e; log_touch("send"); if (woke_from_touch()) return; beeper_play(BEEP_PRESS); app_sm_post(EV_SEND); }
+static void on_undo(lv_event_t *e) { (void)e; log_touch("undo"); if (woke_from_touch()) return; beeper_play(BEEP_PRESS); app_sm_post(EV_UNDO); }
 
 
 
@@ -574,7 +603,7 @@ static lv_obj_t *build_action(lv_align_t align, int dx, int dy, const char *icon
 {
     lv_obj_t *hit = lv_obj_create(s_main);
     lv_obj_remove_style_all(hit);
-    lv_obj_set_size(hit, ICON_HIT, ICON_HIT);
+    lv_obj_set_size(hit, ACTION_HIT, ACTION_HIT);
     lv_obj_align(hit, align, dx, dy);
     lv_obj_remove_flag(hit, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(hit, cb, LV_EVENT_CLICKED, NULL);
@@ -582,13 +611,13 @@ static lv_obj_t *build_action(lv_align_t align, int dx, int dy, const char *icon
     lv_obj_t *cap = lv_label_create(hit);
     lv_label_set_text(cap, caption);
     lv_obj_set_style_text_color(cap, lv_color_hex(color), LV_PART_MAIN);
-    lv_obj_align(cap, LV_ALIGN_CENTER, 0, -12);
+    lv_obj_align(cap, LV_ALIGN_CENTER, 0, -20);
 
     lv_obj_t *ico = lv_label_create(hit);
     lv_label_set_text(ico, icon);
-    lv_obj_set_style_text_font(ico, FONT_BIG, LV_PART_MAIN);
+    lv_obj_set_style_text_font(ico, FONT_ACTION, LV_PART_MAIN);
     lv_obj_set_style_text_color(ico, lv_color_hex(color), LV_PART_MAIN);
-    lv_obj_align(ico, LV_ALIGN_CENTER, 0, 12);
+    lv_obj_align(ico, LV_ALIGN_CENTER, 0, 14);
 
     return hit;
 }
@@ -727,10 +756,16 @@ static void build_main(void)
      * a 72 px transparent target makes tapping it open the portal, which is
      * where you go when the connection is the thing that is wrong. This is why
      * the bottom-right cog is gone -- setup lives here now. */
+    /* A wide top-right strip, not a 72 px corner square: calibration showed touch
+     * X tops out well short of the 448 px right edge, so a corner-tight box was
+     * unreachable and setup never opened. This spans most of the top-right and
+     * sits just above the record button (which starts at y=54), so it catches
+     * the tap without stealing the button's presses. The glyph still renders in
+     * the corner. */
     lv_obj_t *wifi_hit = lv_obj_create(s_main);
     lv_obj_remove_style_all(wifi_hit);
-    lv_obj_set_size(wifi_hit, ICON_HIT, ICON_HIT);
-    lv_obj_align(wifi_hit, LV_ALIGN_TOP_RIGHT, -EDGE, EDGE);
+    lv_obj_set_size(wifi_hit, 184, 52);
+    lv_obj_align(wifi_hit, LV_ALIGN_TOP_RIGHT, 0, 0);
     lv_obj_remove_flag(wifi_hit, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(wifi_hit, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(wifi_hit, on_setup, LV_EVENT_CLICKED, NULL);
@@ -738,7 +773,7 @@ static void build_main(void)
     s_ico_wifi = lv_label_create(wifi_hit);
     lv_label_set_text(s_ico_wifi, LV_SYMBOL_WIFI);
     lv_obj_set_style_text_font(s_ico_wifi, FONT_BIG, LV_PART_MAIN);
-    lv_obj_center(s_ico_wifi);
+    lv_obj_align(s_ico_wifi, LV_ALIGN_RIGHT_MID, -EDGE, 0);
 
     /* The spectrum analyser: one bar per FFT band, spanning the full width and
      * anchored to the bottom edge so the bars rise from the floor of the screen.
@@ -770,14 +805,14 @@ static void build_main(void)
      * landed: Undo it (backspace the whole sentence away) on the left, Send it
      * (strike the configured chord -- Enter, or a modifier + Enter) on the
      * right, where the affirmative action of a dialog sits. Both start dimmed
-     * and inert; the tick lights them the moment a transcript finishes typing,
-     * and dims them again once it is acted on. */
+     * and inert; the tick reveals them the moment a transcript finishes typing,
+     * and hides them again once it is acted on. */
     s_undo_hit = build_action(LV_ALIGN_BOTTOM_LEFT, EDGE, -EDGE, LV_SYMBOL_BACKSPACE, "Undo",
                               C_MSG, on_undo);
     s_send_hit = build_action(LV_ALIGN_BOTTOM_RIGHT, -EDGE, -EDGE, LV_SYMBOL_NEW_LINE, "Send",
                               C_ON, on_send);
-    lv_obj_set_style_opa(s_send_hit, LV_OPA_30, LV_PART_MAIN);
-    lv_obj_set_style_opa(s_undo_hit, LV_OPA_30, LV_PART_MAIN);
+    lv_obj_set_style_opa(s_send_hit, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_opa(s_undo_hit, LV_OPA_TRANSP, LV_PART_MAIN);
 
     /* ---- transient status, and the error badge ----
      * Status ("Transcribing...", "Typing...") sits along the bottom on the same
@@ -880,6 +915,33 @@ void ui_show_setup(const prov_info_t *info, bool can_exit)
     bsp_display_unlock();
 
     ESP_LOGI(TAG, "setup screen shown");
+}
+
+/* Leave the setup screen for the main UI without a reboot. The state machine
+ * calls this once credentials are saved and the portal is torn down; the radio
+ * switches from AP to STA in place (see provisioning_stop / net_wifi). */
+void ui_show_main(void)
+{
+    if (!bsp_display_lock(2000)) {
+        ESP_LOGE(TAG, "could not lock display for main screen");
+        return;
+    }
+    lv_screen_load(s_main);
+    if (s_setup != NULL) {
+        lv_obj_delete(s_setup); /* reclaim its widgets; re-entry rebuilds it */
+        s_setup = NULL;
+    }
+    bsp_display_unlock();
+
+    /* ui_tick froze the screen-power fade while ST_PROVISIONING; bring the panel
+     * back to full and re-arm the idle clock so it fades from now, not from
+     * whenever setup opened. */
+    s_bright_cur = s_bright_tgt = 100;
+    s_asleep = false;
+    s_last_touch_us = esp_timer_get_time();
+    bsp_display_brightness_set(100);
+
+    ESP_LOGI(TAG, "main screen restored after setup");
 }
 
 esp_err_t ui_init(void)

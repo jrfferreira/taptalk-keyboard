@@ -19,6 +19,10 @@ esp_err_t net_init_common(void);
  * needs it to associate. Idempotent. */
 void net_wifi_ensure_sta_netif(void);
 
+/* Resets the STA run-state so the next net_wifi_sta_connect() does a full start.
+ * Provisioning calls this when it stops the radio to raise its setup AP. */
+void net_wifi_sta_forget(void);
+
 /* Cap Wi-Fi TX power to keep association bursts from browning out the board.
  * Call once right after esp_wifi_start(). */
 void net_wifi_limit_tx_power(void);

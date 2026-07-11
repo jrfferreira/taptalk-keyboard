@@ -21,3 +21,8 @@ typedef struct {
  * what the setup screen must display. Posts EV_PROVISIONED once credentials
  * are saved. */
 esp_err_t provisioning_start(prov_info_t *info);
+
+/* Tears the portal down -- HTTP server, DNS task, SoftAP -- so the radio can
+ * switch back to station mode in place, without a reboot (esp_restart() powers
+ * this board off). Safe to call when nothing is running. */
+void provisioning_stop(void);

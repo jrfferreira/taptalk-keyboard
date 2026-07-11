@@ -61,6 +61,7 @@ CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y
 # LVGL: 16-bit colour matches the SH8601's RGB565 pipeline.
 CONFIG_LV_COLOR_DEPTH_16=y
 CONFIG_LV_FONT_MONTSERRAT_28=y
+CONFIG_LV_FONT_MONTSERRAT_36=y
 CONFIG_LV_USE_QRCODE=y
 
 # The BSP's bsp_display_start_with_config() ignores cfg->buffer_size and

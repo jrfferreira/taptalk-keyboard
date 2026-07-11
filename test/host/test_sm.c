@@ -46,8 +46,19 @@ TEST_MAIN("sm", {
     CHECK(o.actions & ACT_PROV_START);
     CHECK(!(o.actions & ACT_WIFI_START));
 
+    /* Saving credentials switches AP->STA in place -- no reboot, because this
+     * board powers off on a software reset. The portal is torn down and the
+     * radio associates with the new config. */
     o = sm_step(ST_PROVISIONING, EV_PROVISIONED, &g);
-    CHECK(o.actions & ACT_REBOOT);
+    CHECK_EQ_INT(o.next, ST_WIFI_CONNECTING);
+    CHECK(o.actions & ACT_PROV_STOP);
+    CHECK(o.actions & ACT_WIFI_START);
+
+    /* The Back button out of setup takes the same in-place path. */
+    o = sm_step(ST_PROVISIONING, EV_SETUP_EXIT, &g);
+    CHECK_EQ_INT(o.next, ST_WIFI_CONNECTING);
+    CHECK(o.actions & ACT_PROV_STOP);
+    CHECK(o.actions & ACT_WIFI_START);
 
     /* The portal is reachable from every state a stuck user can be in. */
     g = all_ready();
