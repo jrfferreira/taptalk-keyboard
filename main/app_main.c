@@ -181,18 +181,21 @@ static void display_start(void)
      * The port keeps the esp_lcd_touch handle as the first member of the indev's
      * driver-data struct, which is how we reach it without a public accessor.
      *
-     * esp_lcd_touch applies mirror in raw panel space, THEN swaps, so with
-     * swap on, screen-X comes from the panel-Y axis. mirror_y was flipping
-     * screen-X: taps landed horizontally mirrored -- Send (bottom-right) fired
-     * Undo (bottom-left), the Wi-Fi icon (top-right) hit the dead top-left
-     * corner. This board needs swap-xy and NO mirror. All three flags are set
-     * explicitly so the result does not depend on the driver's defaults. */
+     * Orientation is owned by ONE layer, not two. LVGL already rotates the touch
+     * point for the 270 display (lv_indev -> lv_display_rotate_point: lx = iy,
+     * ly = hor_res - ix - 1). Setting swap_xy on the touch driver as well applied
+     * the axis change TWICE -- the coordinates came out mangled, with taps landing
+     * far from the finger and even off-screen (negative Y in the indev warnings).
+     * So the touch driver must pass the panel's native frame through UNCHANGED
+     * (no swap, no mirror) and let LVGL's rotation do all the work. Verified
+     * against captured taps: a top-right press that mapped to (319,24) under the
+     * double transform maps to (343,48) -- correctly top-right -- with swap off. */
     lv_indev_t *indev = bsp_display_get_input_dev();
     if (indev != NULL) {
         void *ctx = lv_indev_get_driver_data(indev);
         esp_lcd_touch_handle_t tp = ctx ? *(esp_lcd_touch_handle_t *)ctx : NULL;
         if (tp != NULL) {
-            esp_lcd_touch_set_swap_xy(tp, true);
+            esp_lcd_touch_set_swap_xy(tp, false);
             esp_lcd_touch_set_mirror_x(tp, false);
             esp_lcd_touch_set_mirror_y(tp, false);
             /* Stretch the panel's under-reported coordinate range to the full
