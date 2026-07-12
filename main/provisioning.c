@@ -730,10 +730,6 @@ esp_err_t provisioning_start(prov_info_t *info)
      * a TX burst that trips the AXP2101. Cap the power before anyone connects. */
     net_wifi_limit_tx_power();
 
-    /* Before the HTTP server, so the scan's channel hopping cannot disturb a
-     * phone that has already joined. */
-    scan_networks();
-
     ESP_RETURN_ON_ERROR(start_http_server(), TAG, "http");
     xTaskCreatePinnedToCore(dns_task, "dns", 3072, NULL, 4, NULL, 0);
 
@@ -744,6 +740,20 @@ esp_err_t provisioning_start(prov_info_t *info)
      * reaches a serial console. The API key is never logged. */
     ESP_LOGI(TAG, "setup AP up: ssid=%s pass=%s url=%s", info->ssid, info->pass, info->url);
     return ESP_OK;
+}
+
+void provisioning_scan(void)
+{
+    /* Split out of provisioning_start so the caller can paint the setup screen
+     * first: a full-channel scan blocks ~2 s, and running it before the screen
+     * switched made entering setup feel frozen. Run right after the screen is up,
+     * still before any phone has joined the AP, so the scan's channel hopping
+     * disturbs no one. The cached result is what the /scan endpoint returns. */
+    if (!s_started) {
+        return;
+    }
+    s_ap_count = 0;
+    scan_networks();
 }
 
 void provisioning_stop(void)
