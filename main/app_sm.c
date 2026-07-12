@@ -98,21 +98,25 @@ static void run_actions(uint32_t actions)
     if (actions & ACT_PROV_START) {
         prov_info_t info;
         if (provisioning_start(&info) == ESP_OK) {
+            /* Paint the setup screen BEFORE the ~2 s network scan, so entering
+             * setup is instant instead of feeling frozen. The scan runs right
+             * after, still before any phone has joined the AP. */
             ui_show_setup(&info, config_is_provisioned(&s_cfg));
+            provisioning_scan();
         } else {
             ui_set_error("Setup AP failed");
         }
     }
     if (actions & ACT_PROV_STOP) {
-        /* Give the "Saved" page a moment to reach the phone before the AP drops,
-         * then tear the portal down and adopt the just-saved credentials. Runs
-         * before ACT_WIFI_START below, which associates using this config. No
-         * reboot: this board powers off on esp_restart() rather than restarting,
-         * so the AP->STA switch happens in place. */
+        /* Switch to the main screen first so leaving setup is instant, THEN tear
+         * the portal down. The delay lets the "Saved" page reach the phone before
+         * the AP drops; config_load adopts the just-saved credentials for the
+         * ACT_WIFI_START below. No reboot: this board powers off on esp_restart()
+         * rather than restarting, so the AP->STA switch happens in place. */
+        ui_show_main();
         vTaskDelay(pdMS_TO_TICKS(400));
         provisioning_stop();
         (void)config_load(&s_cfg);
-        ui_show_main();
     }
     if (actions & (ACT_WIFI_START | ACT_WIFI_RETRY)) {
         if (net_wifi_sta_connect(&s_cfg) != ESP_OK) {

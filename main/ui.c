@@ -447,21 +447,9 @@ static void sheet_close(lv_event_t *e)
 /* The beep goes out from the touch event, not from the state machine, so the
  * confirmation is bound to the finger rather than to whatever the machine
  * decides to do about it. A press that is refused still clicks. */
-/* TEMP touch calibration: log where a tap that reached a control actually
- * landed, so the swap/mirror transform can be checked against the target. */
-static void log_touch(const char *what)
-{
-    lv_indev_t *iv = lv_indev_active();
-    if (iv == NULL) return;
-    lv_point_t p;
-    lv_indev_get_point(iv, &p);
-    ESP_LOGI(TAG, "CAL: %s at (%d,%d)", what, (int)p.x, (int)p.y);
-}
-
 static void on_press(lv_event_t *e)
 {
     (void)e;
-    log_touch("button");
     if (woke_from_touch()) {
         s_swallow_release = true; /* the matching release must not act either */
         return;                   /* a tap on a sleeping screen only wakes it */
@@ -495,31 +483,22 @@ static void on_press_lost(lv_event_t *e)
     beeper_play(BEEP_RELEASE);
     app_sm_post(EV_PRESS_LOST);
 }
-static void on_setup(lv_event_t *e) { (void)e; log_touch("wifi/setup"); if (woke_from_touch()) return; app_sm_post(EV_ENTER_SETUP); }
+/* Setup is a deliberate destination, not a stray press: open it even if this tap
+ * also woke the screen. Consuming the tap purely to wake (as the record button
+ * does) meant a setup tap on a dozing screen just lit it up and did nothing, so
+ * setup "never opened". Waking and opening on the same tap is fine here -- the
+ * portal has a Back button. */
+static void on_setup(lv_event_t *e) { (void)e; woke_from_touch(); app_sm_post(EV_ENTER_SETUP); }
 static void on_setup_exit(lv_event_t *e) { (void)e; if (woke_from_touch()) return; app_sm_post(EV_SETUP_EXIT); }
 
-/* Diagnostic: logs where a tap landed in LOGICAL (post-rotation) coordinates,
- * but only when it hit no control -- exactly the case where the cog is being
- * missed. If a tap meant for the bottom-right cog logs somewhere else, the touch
- * transform is wrong; if it logs at the cog's position, the hit-test is. */
-static void screen_tap_log(lv_event_t *e)
+/* A tap that hits no control must still wake a sleeping screen. The button and
+ * corner handlers call woke_from_touch(), but a tap on empty background only
+ * reaches here -- without this, a miss on a dark screen left it dark, which
+ * looked like a dead device. */
+static void screen_bg_tap(lv_event_t *e)
 {
     (void)e;
-    /* A tap that hits no control must still wake a sleeping screen. The button
-     * and corner handlers call woke_from_touch(), but a tap on empty background
-     * only reaches here -- without this, a miss on a dark screen logged but left
-     * it dark, which looked like a dead device. */
     (void)woke_from_touch();
-
-    lv_indev_t *indev = lv_indev_active();
-    if (indev == NULL) {
-        return;
-    }
-    lv_point_t p;
-    lv_indev_get_point(indev, &p);
-    ESP_LOGI(TAG, "tap (%d,%d) hit no control  [screen is %dx%d]", (int)p.x, (int)p.y,
-             (int)lv_display_get_horizontal_resolution(NULL),
-             (int)lv_display_get_vertical_resolution(NULL));
 }
 
 /* Send and Undo click (not press/release): they are one-shot taps, not a
@@ -527,8 +506,8 @@ static void screen_tap_log(lv_event_t *e)
  * is anything to act on. */
 /* Like the button, a tap on a sleeping screen only wakes it -- it must not fire
  * Send or Undo. */
-static void on_send(lv_event_t *e) { (void)e; log_touch("send"); if (woke_from_touch()) return; beeper_play(BEEP_PRESS); app_sm_post(EV_SEND); }
-static void on_undo(lv_event_t *e) { (void)e; log_touch("undo"); if (woke_from_touch()) return; beeper_play(BEEP_PRESS); app_sm_post(EV_UNDO); }
+static void on_send(lv_event_t *e) { (void)e; if (woke_from_touch()) return; beeper_play(BEEP_PRESS); app_sm_post(EV_SEND); }
+static void on_undo(lv_event_t *e) { (void)e; if (woke_from_touch()) return; beeper_play(BEEP_PRESS); app_sm_post(EV_UNDO); }
 
 
 
@@ -751,29 +730,32 @@ static void build_main(void)
     lv_obj_set_style_text_font(s_ico_usb, FONT_BIG, LV_PART_MAIN);
     lv_obj_align(s_ico_usb, LV_ALIGN_TOP_LEFT, EDGE + 20, EDGE + 12);
 
-    /* Top-right: the Wi-Fi status glyph doubles as the door to setup. Its
-     * colour still reports the connection (green up, grey down); wrapping it in
-     * a 72 px transparent target makes tapping it open the portal, which is
-     * where you go when the connection is the thing that is wrong. This is why
-     * the bottom-right cog is gone -- setup lives here now. */
-    /* A wide top-right strip, not a 72 px corner square: calibration showed touch
-     * X tops out well short of the 448 px right edge, so a corner-tight box was
-     * unreachable and setup never opened. This spans most of the top-right and
-     * sits just above the record button (which starts at y=54), so it catches
-     * the tap without stealing the button's presses. The glyph still renders in
-     * the corner. */
+    /* Top-right: the Wi-Fi status glyph doubles as the door to setup. Its colour
+     * reports the connection (green up, grey down); tapping it opens the portal.
+     *
+     * The tap target and the glyph are separate objects. The target is a large
+     * invisible box in the corner (created first, so it sits behind); the glyph
+     * is aligned to the SCREEN, mirror-symmetric with the USB icon on the left,
+     * so the two read as a matched pair instead of the glyph drifting up-right
+     * inside its hit box. The glyph is not clickable, so taps fall through to the
+     * box beneath it. */
+    /* A generous top-right box around the glyph. Now that the touch transform is
+     * correct (see the swap fix in app_main), a top-right press lands top-right
+     * (~343,48), so this no longer needs the full-width/L-shape workarounds -- it
+     * just needs to be comfortably bigger than a fingertip. It clears the record
+     * button (which starts at y~62 and x<=338), so it never steals a button tap. */
     lv_obj_t *wifi_hit = lv_obj_create(s_main);
     lv_obj_remove_style_all(wifi_hit);
-    lv_obj_set_size(wifi_hit, 184, 52);
+    lv_obj_set_size(wifi_hit, 150, 92);
     lv_obj_align(wifi_hit, LV_ALIGN_TOP_RIGHT, 0, 0);
     lv_obj_remove_flag(wifi_hit, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(wifi_hit, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(wifi_hit, on_setup, LV_EVENT_CLICKED, NULL);
 
-    s_ico_wifi = lv_label_create(wifi_hit);
+    s_ico_wifi = lv_label_create(s_main);
     lv_label_set_text(s_ico_wifi, LV_SYMBOL_WIFI);
     lv_obj_set_style_text_font(s_ico_wifi, FONT_BIG, LV_PART_MAIN);
-    lv_obj_align(s_ico_wifi, LV_ALIGN_RIGHT_MID, -EDGE, 0);
+    lv_obj_align(s_ico_wifi, LV_ALIGN_TOP_RIGHT, -(EDGE + 20), EDGE + 12);
 
     /* The spectrum analyser: one bar per FFT band, spanning the full width and
      * anchored to the bottom edge so the bars rise from the floor of the screen.
@@ -951,7 +933,7 @@ esp_err_t ui_init(void)
 
     ESP_RETURN_ON_FALSE(bsp_display_lock(0), ESP_FAIL, TAG, "display lock");
     build_main();
-    lv_obj_add_event_cb(s_main, screen_tap_log, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(s_main, screen_bg_tap, LV_EVENT_PRESSED, NULL);
     lv_screen_load(s_main);
     /* 60 ms: fast enough that the wave travels smoothly, slow enough that the
      * QSPI flush is not the busiest thing on the board. */

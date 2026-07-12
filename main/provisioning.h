@@ -22,6 +22,10 @@ typedef struct {
  * are saved. */
 esp_err_t provisioning_start(prov_info_t *info);
 
+/* Scans for nearby networks to populate the setup page's dropdown. Blocks ~2 s,
+ * so call it AFTER the setup screen is painted, not from provisioning_start. */
+void provisioning_scan(void);
+
 /* Tears the portal down -- HTTP server, DNS task, SoftAP -- so the radio can
  * switch back to station mode in place, without a reboot (esp_restart() powers
  * this board off). Safe to call when nothing is running. */
