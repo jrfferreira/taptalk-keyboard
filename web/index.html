@@ -293,28 +293,14 @@
 
   /* ---------------------------------------------------------------- video */
   .video {
-    position: relative;
-    aspect-ratio: 16 / 9;
     border-radius: var(--radius);
-    border: 1px dashed var(--line);
-    background:
-      radial-gradient(closest-side at 50% 45%, rgba(61,220,151,.07), transparent 70%),
-      var(--bg-elev);
-    display: grid; place-items: center; gap: 12px;
+    border: 1px solid var(--line-soft);
+    background: var(--bg-elev);
     overflow: hidden;
   }
-  .video__play {
-    width: 62px; height: 62px; border-radius: 50%;
-    display: grid; place-items: center;
-    background: var(--bg-elev-2); border: 1px solid var(--line);
-    color: var(--mint);
-  }
-  .video__play svg { width: 22px; height: 22px; margin-left: 3px; }
-  .video__label { color: var(--fg-faint); font-size: 14.5px; text-align: center; padding: 0 20px; }
-  .video > * { grid-area: 1 / 1; }
-  .video__stack { display: grid; justify-items: center; gap: 14px; }
-  /* A real embed drops straight in and fills the box. */
-  .video iframe, .video video { width: 100%; height: 100%; border: 0; display: block; }
+  /* A real embed drops straight in and fills the box the same way the gif does. */
+  .video img, .video iframe, .video video { width: 100%; height: auto; border: 0; display: block; }
+  .video iframe, .video video { aspect-ratio: 16 / 9; height: 100%; }
 
   /* ---------------------------------------------------------------- cards */
   .cards { display: grid; gap: 12px; }
@@ -582,8 +568,9 @@
 
 <section id="demo">
   <h2>See it work</h2>
-  <!-- TO ADD THE VIDEO: delete the .video__stack div below and drop an embed in
-       its place. The container is already 16:9 and clips to the rounded corner.
+  <!-- Real footage: hold, release, and the transcript lands as keystrokes on
+       the connected iPad. TO SWAP IN A REAL VIDEO instead, replace the img
+       below with:
          <iframe src="https://www.youtube.com/embed/VIDEO_ID"
                  title="TapTalk Keyboard demo"
                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture"
@@ -593,12 +580,7 @@
            <source src="demo.mp4" type="video/mp4">
          </video>                                                            -->
   <div class="video">
-    <div class="video__stack">
-      <div class="video__play" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>
-      </div>
-      <p class="video__label">A demo is coming.<br>Until then, the board above is doing what the real one does.</p>
-    </div>
+    <img src="demo.gif" loading="lazy" alt="A finger holds down the button on the TapTalk device; it glows, then releases, and the words 'Hello, world.' are typed into the document on the connected iPad.">
   </div>
 </section>
 
